@@ -513,10 +513,13 @@ best-available gateway and fails over natively across regions.
 > Could not connect to the GlobalProtect service"** (`PanGPA.log`:
 > `CPanSocket::onConnect ... error code = 10061`) — the portal is never even
 > contacted. Test from a **native x64 (AMD64) Windows** client (a physical PC, an
-> x64 Windows VM, or a Windows EC2 instance), or install the **native ARM64
-> GlobalProtect app** (from the PANW support/CSP portal — the firewall portal
-> serves the x64 build) on a Windows-ARM machine. macOS/Linux clients are also
-> supported natively.
+> x64 Windows VM, or a Windows EC2 instance), or on a **Windows-on-ARM** machine
+> install the **native ARM64** build **`GlobalProtectARM64.msi`** (not
+> `GlobalProtect64.msi`). The firewall portal serves only the 32/64-bit x64 MSIs,
+> so get the ARM64 one from the **PANW Customer Support Portal** (*Updates →
+> Software Updates → GlobalProtect Agent →* the version *→ `GlobalProtectARM64.msi`*).
+> First **uninstall the x64 GP and reboot** (it left a broken driver), then
+> install the ARM64 MSI. macOS/Linux clients are also supported natively.
 
 > **HTTP→HTTPS portal redirect (optional, `enable_http_redirect`).** The GP
 > portal is HTTPS-only and PAN-OS has no built-in :80→:443 redirect for it;
