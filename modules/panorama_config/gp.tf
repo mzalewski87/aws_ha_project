@@ -26,6 +26,12 @@ locals {
   # comparison is exact.
   gp_group_gate = var.enable_globalprotect && var.gp_auth_method == "ldap" && var.gp_ldap_base_dn != ""
   gp_group_dn   = lower("cn=${var.gp_vpn_group},cn=users,${var.gp_ldap_base_dn}")
+  # NetBIOS domain (first DC= label of the base DN, e.g. "DC=panw,DC=labs" ->
+  # "panw"). Group-mapping stores members as DOMAIN\sam (panw\admin), but a GP
+  # user logs in with the bare sAMAccountName. Setting user_domain on the auth
+  # profile qualifies the login to DOMAIN\user so the allow-list group check
+  # matches — without it, group-gated auth rejects even valid members.
+  gp_user_domain = local.gp_group_gate ? lower(regex("^[Dd][Cc]=([^,]+)", var.gp_ldap_base_dn)[0]) : null
 }
 
 # Server certificate (public CA or exported ACM cert — PAN-OS cannot consume ACM).
@@ -131,6 +137,9 @@ resource "panos_authentication_profile" "gp_ldap" {
   # Without a base DN there is no group DN to gate on, so fall back to "all" — a
   # bad group DN would otherwise lock out every LDAP login.
   allow_list = local.gp_group_gate ? [local.gp_group_dn] : ["all"]
+  # Qualifies the bare sAMAccountName login to DOMAIN\user so the allow-list
+  # group-membership check matches (group-mapping stores members as DOMAIN\user).
+  user_domain = local.gp_user_domain
 
   method = {
     ldap = {
