@@ -128,6 +128,7 @@ module "panorama_config" {
   gp_ldap_base_dn          = var.gp_ldap_base_dn
   gp_ldap_bind_dn          = var.gp_ldap_bind_dn
   gp_ldap_bind_password    = var.gp_ldap_bind_password
+  gp_vpn_group             = var.gp_vpn_group
 
   enable_edl    = var.enable_edl
   edl_server_ip = var.edl_server_ip

@@ -337,6 +337,7 @@ module "spoke2_dc" {
 
   ad_test_user_name     = var.dc_ad_test_user_name
   ad_test_user_password = var.dc_ad_test_user_password
+  vpn_group             = var.dc_vpn_group
 
   tags       = var.tags
   depends_on = [module.routing]

@@ -93,6 +93,7 @@ module "region_a" {
   dc_promote_to_dc         = var.dc_promote_to_dc
   dc_ad_test_user_name     = var.dc_ad_test_user_name
   dc_ad_test_user_password = var.dc_ad_test_user_password
+  dc_vpn_group             = var.gp_vpn_group
 
   # HTTP->HTTPS redirect ALB behind the GA :80 listener (only meaningful with GA).
   enable_http_redirect = local.http_redirect_on
@@ -152,6 +153,7 @@ module "region_b" {
   dc_primary_ip            = module.region_a.dc_private_ip
   dc_domain_admin_user     = "${var.dc_ad_test_user_name}@${var.dc_domain_name}"
   dc_domain_admin_password = var.dc_ad_test_user_password
+  dc_vpn_group             = var.gp_vpn_group
 
   # HTTP->HTTPS redirect ALB behind the GA :80 listener (only meaningful with GA).
   enable_http_redirect = local.http_redirect_on

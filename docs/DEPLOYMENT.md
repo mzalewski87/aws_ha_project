@@ -385,6 +385,47 @@ runs as part of the same `apply`). Verify with `Get-ADUser
 Phase GP's LDAP option (below) uses to bind — the same credentials also work
 to actually log in to the GP portal for testing.
 
+### Managing VPN users
+
+GlobalProtect access is gated on the **`vpnusers` AD group** (`gp_vpn_group`,
+default `vpnusers`). The same `apply` creates that group on the domain controller
+and adds the test user to it, and Panorama is configured (LDAP group-mapping +
+the GP auth-profile allow-list) so **only members of `vpnusers` can connect** —
+in both regions (AD replication copies the group + members to the Region B
+replica DC, and the shared Panorama template enforces the gate on both firewall
+pairs). To let someone connect, create an AD user and add them to `vpnusers`; to
+revoke, remove them from the group.
+
+You can manage users **without RDP**, straight from your workstation, via SSM
+RunCommand against the domain controller (`terraform output -raw dc_instance_id`):
+
+```bash
+DC=$(terraform output -raw dc_instance_id)
+NEWUSER="alice"; NEWPASS='Ch00se-A-Strong-Passw0rd!'
+aws ssm send-command --instance-ids "$DC" \
+  --document-name AWS-RunPowerShellScript \
+  --parameters commands="[\"New-ADUser -Name '$NEWUSER' -SamAccountName '$NEWUSER' -UserPrincipalName '$NEWUSER@panw.labs' -AccountPassword (ConvertTo-SecureString '$NEWPASS' -AsPlainText -Force) -Enabled \$true -PasswordNeverExpires \$true; Add-ADGroupMember -Identity 'vpnusers' -Members '$NEWUSER'\"]" \
+  --query 'Command.CommandId' --output text
+# check it: 
+#   aws ssm send-command --instance-ids "$DC" --document-name AWS-RunPowerShellScript \
+#     --parameters commands="[\"Get-ADGroupMember vpnusers | Select-Object -Expand SamAccountName\"]"
+```
+
+Or **over RDP** (see the SSM :3389 port-forward above), in a PowerShell prompt on
+the DC:
+
+```powershell
+New-ADUser -Name alice -SamAccountName alice -UserPrincipalName alice@panw.labs `
+  -AccountPassword (Read-Host -AsSecureString "Password") -Enabled $true -PasswordNeverExpires $true
+Add-ADGroupMember -Identity vpnusers -Members alice
+Get-ADGroupMember vpnusers        # verify
+```
+
+The new user logs in to GlobalProtect with the **bare sAMAccountName** (`alice`,
+not `alice@panw.labs`) and their AD password, and reaches the AWS spoke resources
+over the tunnel (split-tunnel `10.0.0.0/8`). A user who is NOT in `vpnusers`
+authenticates against AD but is refused the VPN by the allow-list.
+
 ---
 
 ## Phase GP — GlobalProtect

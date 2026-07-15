@@ -286,6 +286,12 @@ variable "dc_ad_test_user_password" {
   sensitive   = true
 }
 
+variable "gp_vpn_group" {
+  description = "AD group whose members may connect via GlobalProtect. Auto-created on the DC (the test user is added to it) and enforced on Panorama via LDAP group-mapping + the GP auth-profile allow-list. Must match phase2 gp_vpn_group."
+  type        = string
+  default     = "vpnusers"
+}
+
 # --- Global Accelerator (Phase R2) ------------------------------------------
 
 variable "enable_global_accelerator" {

@@ -18,6 +18,14 @@ locals {
   # literals in one conditional); use two separate resources instead (below)
   # and pick the active one's name here — a plain string ternary is safe.
   gp_auth_profile_ref = var.gp_auth_method == "ldap" ? try(panos_authentication_profile.gp_ldap[0].name, "") : try(panos_authentication_profile.gp_local[0].name, "")
+
+  # Group-gated GP access: only members of the vpnusers AD group may connect.
+  # Enabled only for LDAP auth with a base DN set (a group DN needs it), so it
+  # never self-locks a local-auth or base-DN-less deploy. The DN is lowercased to
+  # match how PAN-OS group-mapping normalizes group DNs, so the auth allow-list
+  # comparison is exact.
+  gp_group_gate = var.enable_globalprotect && var.gp_auth_method == "ldap" && var.gp_ldap_base_dn != ""
+  gp_group_dn   = lower("cn=${var.gp_vpn_group},cn=users,${var.gp_ldap_base_dn}")
 }
 
 # Server certificate (public CA or exported ACM cert — PAN-OS cannot consume ACM).
@@ -116,15 +124,50 @@ resource "panos_authentication_profile" "gp_local" {
 }
 
 resource "panos_authentication_profile" "gp_ldap" {
-  count      = local.gp_ldap_count
-  location   = local.gp_tpl_vsys
-  name       = "${var.gp_auth_profile_name}-ldap"
-  allow_list = ["all"]
+  count    = local.gp_ldap_count
+  location = local.gp_tpl_vsys
+  name     = "${var.gp_auth_profile_name}-ldap"
+  # Gate GP access on the vpnusers AD group (resolved by the group-mapping below).
+  # Without a base DN there is no group DN to gate on, so fall back to "all" — a
+  # bad group DN would otherwise lock out every LDAP login.
+  allow_list = local.gp_group_gate ? [local.gp_group_dn] : ["all"]
 
   method = {
     ldap = {
       server_profile  = panos_ldap_profile.ad[0].name
       login_attribute = "sAMAccountName"
+    }
+  }
+}
+
+# LDAP group-mapping so PAN-OS resolves vpnusers membership (the auth allow-list
+# above gates on it). The panos provider has no resource for group-mapping, so
+# it's set via the raw XML API — same pattern as null_resource.gp_tunnel_node.
+# AD replication makes the group valid in both regions; the shared template
+# pushes this mapping to both firewall pairs.
+resource "null_resource" "gp_group_mapping" {
+  count = local.gp_group_gate ? 1 : 0
+  triggers = {
+    group_dn = local.gp_group_dn
+    profile  = panos_ldap_profile.ad[0].name
+    template = var.template_name
+    vsys     = var.vsys
+  }
+  depends_on = [panos_ldap_profile.ad]
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = "${path.module}/../../scripts/set-group-mapping.sh"
+    environment = {
+      PANORAMA_HOST     = var.panorama_hostname
+      PANORAMA_PORT     = tostring(var.panorama_port)
+      PANORAMA_USER     = var.panorama_username
+      PANORAMA_PASSWORD = var.panorama_password
+      TEMPLATE_NAME     = var.template_name
+      VSYS              = var.vsys
+      MAP_NAME          = "gp-group-map"
+      LDAP_PROFILE      = panos_ldap_profile.ad[0].name
+      GROUP_DN          = local.gp_group_dn
     }
   }
 }

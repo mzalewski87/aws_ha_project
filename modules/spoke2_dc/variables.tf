@@ -105,6 +105,12 @@ variable "ad_test_user_name" {
   default     = "admin"
 }
 
+variable "vpn_group" {
+  description = "AD group whose members may connect via GlobalProtect (created on the DC; Panorama group-mapping + auth allow-list gate on it). The test user is added to it."
+  type        = string
+  default     = "vpnusers"
+}
+
 variable "ad_test_user_password" {
   description = "Password for ad_test_user_name. Empty = skip creation entirely."
   type        = string

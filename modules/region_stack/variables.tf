@@ -177,6 +177,12 @@ variable "dc_ad_test_user_name" {
   default = "admin"
 }
 
+variable "dc_vpn_group" {
+  description = "AD group gating GlobalProtect access (created on the DC; the test user is added to it)."
+  type        = string
+  default     = "vpnusers"
+}
+
 variable "dc_ad_test_user_password" {
   type      = string
   default   = ""

@@ -270,8 +270,9 @@ resource "terraform_data" "ad_test_user" {
   count = var.promote_to_dc && !var.is_additional_dc && var.ad_test_user_password != "" ? 1 : 0
 
   triggers_replace = {
-    instance = aws_instance.dc.id
-    password = sha256(var.ad_test_user_password)
+    instance  = aws_instance.dc.id
+    password  = sha256(var.ad_test_user_password)
+    vpn_group = var.vpn_group
   }
 
   provisioner "local-exec" {
@@ -281,6 +282,7 @@ resource "terraform_data" "ad_test_user" {
       AD_USERNAME      = var.ad_test_user_name
       AD_USER_PASSWORD = var.ad_test_user_password
       AD_DOMAIN        = var.domain_name
+      VPN_GROUP        = var.vpn_group
     }
   }
 }

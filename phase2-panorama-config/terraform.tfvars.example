@@ -81,6 +81,9 @@ enable_globalprotect = false
 # gp_ldap_base_dn       = "DC=panw,DC=labs"   # from root dc_domain_name
 # gp_ldap_bind_dn       = "admin@panw.labs"   # root dc_ad_test_user_name @ dc_domain_name
 # gp_ldap_bind_password = "REPLACE_ME"        # root dc_ad_test_user_password
+# Only members of this AD group may connect (LDAP group-mapping + auth allow-list,
+# configured automatically). Must match root gp_vpn_group. Default "vpnusers".
+# gp_vpn_group          = "vpnusers"
 # Multi-region LDAP failover: after the Region B DC is up, add its IP so PAN-OS
 # fails over on a region outage (root output dc_private_ip_b).
 # gp_ldap_extra_server_ips = ["10.23.0.10"]

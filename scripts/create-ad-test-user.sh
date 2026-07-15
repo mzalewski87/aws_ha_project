@@ -25,6 +25,10 @@ set -euo pipefail
 : "${AD_USER_PASSWORD:?AD_USER_PASSWORD required}"
 : "${AD_DOMAIN:?AD_DOMAIN required}"
 AD_USERNAME="${AD_USERNAME:-admin}"
+# AD group whose members are allowed to connect via GlobalProtect (the Panorama
+# group-mapping + auth-profile allow-list gate on this group). Created here and
+# the test user is added to it, so there is a working VPN member out of the box.
+VPN_GROUP="${VPN_GROUP:-vpnusers}"
 export AWS_REGION="${AWS_REGION:-eu-central-1}"
 
 echo "[ad-user] waiting for SSM agent on ${DC_INSTANCE_ID} (up to 20 min; survives the AD DS promotion reboot)"
@@ -45,9 +49,9 @@ fi
 # gives headroom) for `Get-ADDomain` to succeed before creating the user, since
 # AD DS can take a few more minutes to accept requests after the SSM agent
 # reconnects post-reboot.
-PS_SCRIPT="$(python3 - "$AD_USERNAME" "$AD_USER_PASSWORD" "$AD_DOMAIN" <<'PY'
+PS_SCRIPT="$(python3 - "$AD_USERNAME" "$AD_USER_PASSWORD" "$AD_DOMAIN" "$VPN_GROUP" <<'PY'
 import sys, json
-user, pw, domain = sys.argv[1], sys.argv[2], sys.argv[3]
+user, pw, domain, vpn_group = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 pw_escaped = pw.replace("'", "''")
 script = f"""
 $deadline = (Get-Date).AddMinutes(15)
@@ -83,6 +87,23 @@ try {{
   Write-Output "user '{user}' added to Domain Admins"
 }} catch {{
   Write-Output "Domain Admins membership: $($_.Exception.Message)"
+}}
+# GlobalProtect access group. Membership in this group is what grants a
+# client-to-site VPN (Panorama group-mapping + auth-profile allow-list gate on
+# it). Create it (global security group) and add the test user so there's a
+# working VPN member immediately. Idempotent. AD replication copies the group +
+# members to the Region B replica DC automatically.
+if (Get-ADGroup -Filter "Name -eq '{vpn_group}'" -ErrorAction SilentlyContinue) {{
+  Write-Output "group '{vpn_group}' already exists"
+}} else {{
+  New-ADGroup -Name '{vpn_group}' -SamAccountName '{vpn_group}' -GroupScope Global -GroupCategory Security
+  Write-Output "group '{vpn_group}' created"
+}}
+try {{
+  Add-ADGroupMember -Identity '{vpn_group}' -Members '{user}' -ErrorAction Stop
+  Write-Output "user '{user}' added to '{vpn_group}'"
+}} catch {{
+  Write-Output "{vpn_group} membership: $($_.Exception.Message)"
 }}
 """
 print(json.dumps([line for line in script.splitlines()]))

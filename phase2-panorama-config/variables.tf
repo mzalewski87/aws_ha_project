@@ -219,6 +219,12 @@ variable "gp_ldap_base_dn" {
   default     = ""
 }
 
+variable "gp_vpn_group" {
+  description = "AD group whose members may connect via GlobalProtect (LDAP auth). Enforced via group-mapping + auth allow-list; must match the root gp_vpn_group (the group auto-created on the DC)."
+  type        = string
+  default     = "vpnusers"
+}
+
 variable "gp_ldap_bind_dn" {
   description = "LDAP bind DN/UPN, e.g. \"admin@panw.labs\" — the AD test user from root dc_ad_test_user_name works for this."
   type        = string

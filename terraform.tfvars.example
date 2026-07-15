@@ -83,6 +83,12 @@ dc_promote_to_dc = true
 dc_ad_test_user_name     = "admin"
 # dc_ad_test_user_password = "REPLACE_ME"
 
+# AD group whose members may connect via GlobalProtect. Auto-created on the DC
+# (the test user is added to it) and enforced on Panorama (LDAP group-mapping +
+# GP auth allow-list). Add/remove AD users to grant/revoke VPN access. Must equal
+# the phase2 gp_vpn_group.
+gp_vpn_group = "vpnusers"
+
 # --- Region B + Global Accelerator (Phase R2) -------------------------------
 # (enable_region_b is set once near the top, in the Region / global section)
 enable_global_accelerator = false

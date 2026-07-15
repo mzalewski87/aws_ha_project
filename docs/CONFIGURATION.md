@@ -70,6 +70,7 @@ Copy the template and edit: `cp terraform.tfvars.example terraform.tfvars`.
 | `dns_secondary` | `1.1.1.1` | secondary resolver for FW mgmt |
 | `dc_domain_name` / `dc_promote_to_dc` | `panw.labs` / `true` | AD DS domain; set `false` for plain Windows |
 | `dc_ad_test_user_name` / `dc_ad_test_user_password` | `"admin"` / `""` | AD user auto-created via SSM RunCommand once the forest is up — set a password to enable it. Doubles as the GP LDAP bind account ([Phase GP](DEPLOYMENT.md#phase-gp--globalprotect)) and as a login you can test the GP portal with |
+| `gp_vpn_group` | `"vpnusers"` | AD group whose members may connect via GlobalProtect. Auto-created on the DC (the test user is added to it); enforced on Panorama via LDAP group-mapping + the GP auth allow-list. Only gates the LDAP auth path. Add/remove users to grant/revoke VPN access — see [Managing VPN users](DEPLOYMENT.md#managing-vpn-users). Must match the phase2 `gp_vpn_group`. |
 
 ### Region B / Global Accelerator (Phase R2 — leave off until Region A works)
 
@@ -134,6 +135,7 @@ Run this **after** the Phase 1a SSM tunnel is up (`scripts/configure-panorama.sh
 | `gp_auth_method` | `"local"` (default, uses `gp_local_users`) or `"ldap"` (against the spoke2 AD DC — promote it first, Phase 3) |
 | `gp_local_users` | (when `gp_auth_method="local"`) baseline auth users you choose, e.g. `{ "vpnuser" = "<pw>" }` |
 | `gp_ldap_server_ip` / `gp_ldap_base_dn` / `gp_ldap_bind_dn` / `gp_ldap_bind_password` | (when `gp_auth_method="ldap"`) root output `dc_private_ip`; `"DC=..."` derived from root `dc_domain_name`; `"<dc_ad_test_user_name>@<dc_domain_name>"`; root `dc_ad_test_user_password` — the auto-created AD test user doubles as the bind account |
+| `gp_vpn_group` | (LDAP auth) AD group that gates GP access, default `vpnusers` — must match root `gp_vpn_group`. When set with a base DN, only members of this group can connect (LDAP group-mapping + auth allow-list, configured automatically). |
 | `gp_ldap_extra_server_ips` | (multi-region) additional DC IPs appended after the primary for region-outage LDAP failover — the Region B DC (root output `dc_private_ip_b`). Empty for single-DC. PAN-OS tries the primary first, then the extras; failover is fast because the LDAP profile caps the per-server connect wait (`gp_ldap_bind_timelimit`, default 3s, in `modules/panorama_config`) so a dead-region DC doesn't stall GP auth past its timeout. GP AD login survives a whole Region A outage. |
 | `gp_client_version` | GP app package to download + **activate** on each firewall so the portal can serve the installer (else portal download = `errors.txt` "Could not find file"). `"latest"` (default) auto-resolves newest; firewalls need PANW update-server egress. |
 | `gp_external_gateways` | one entry per region, e.g. `[{ name="gw-eu-central", address="gw-eu-central.example.com", priority="1" }]`; add Region B in R2 |
