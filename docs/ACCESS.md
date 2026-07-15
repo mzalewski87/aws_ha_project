@@ -14,22 +14,63 @@ opened). Two patterns:
 
 ## 0. Before you connect (do this once per shell)
 
-Every command below needs the AWS CLI authenticated **and a region set** — the
-`#1` mistake is `NoRegion` / `You must specify a region`. Export both, then
-verify:
+Every command below needs the AWS CLI **authenticated** and a **region set** —
+the two most common failures are `You must specify a region` (`NoRegion`) and an
+expired/absent login. This section uses the profile name **`awsha`** as the
+example throughout; if your profile has a different name, substitute it. (The
+commands below are literal — do **not** paste angle-bracket placeholders like
+`<...>` into a shell; that's a syntax error.)
+
+**Step 1 — find or create your AWS CLI profile.** List what you already have:
 
 ```bash
-export AWS_PROFILE=<your-profile>     # your CLI/SSO profile; run `aws sso login --profile <p>` first if needed
-export AWS_REGION=eu-central-1        # Region A. For Region B targets use: export AWS_REGION=eu-west-1
-
-aws sts get-caller-identity          # must print your account — if this fails, fix auth before continuing
+aws configure list-profiles
 ```
 
-You also need the **Session Manager plugin** installed
-(see [PREREQUISITES.md](PREREQUISITES.md)) and, for RDP/SSH, the EC2 private key
-at `~/.ssh/<key_name>.pem` (default `~/.ssh/awsha-key.pem`). Every
+- If it prints a name (e.g. `awsha`), use that name as `AWS_PROFILE` in step 2.
+- If it prints **nothing** (or errors), create one now — pick ONE:
+
+  **A) IAM Identity Center (SSO)** — recommended:
+  ```bash
+  aws configure sso
+  # answer the prompts:
+  #   SSO session name        : awsha
+  #   SSO start URL           : https://<your-org>.awsapps.com/start/   (from your admin)
+  #   SSO region              : the region where Identity Center lives (e.g. us-west-2)
+  #   registration scopes     : sso:account:access   (default)
+  #   pick your account + role
+  #   CLI default client Region : eu-central-1
+  #   CLI default output      : json
+  #   profile name            : awsha
+  ```
+  (Full walkthrough + the "Invalid request" region gotcha:
+  [PREREQUISITES.md §3](PREREQUISITES.md#3-aws-cli-authentication).)
+
+  **B) IAM access keys:**
+  ```bash
+  aws configure --profile awsha    # paste Access Key ID + Secret; default region eu-central-1
+  ```
+
+**Step 2 — log in (SSO only) and select the profile + region for this shell:**
+
+```bash
+aws sso login --profile awsha        # SSO only; skip for access keys. Opens a browser to approve.
+export AWS_PROFILE=awsha              # = the profile name from step 1
+export AWS_REGION=eu-central-1        # Region A. For Region B targets: export AWS_REGION=eu-west-1
+```
+
+**Step 3 — verify it works before continuing:**
+
+```bash
+aws sts get-caller-identity          # must print your Account/UserId/Arn
+```
+
+If that prints your account, you're set. You also need the **Session Manager
+plugin** installed (see [PREREQUISITES.md §2](PREREQUISITES.md#2-tools-to-install))
+and, for RDP/SSH, the EC2 private key at `~/.ssh/awsha-key.pem` (this is the
+`key_name` key pair — adjust the filename if you named yours differently). Every
 `start-session` command opens a tunnel that must stay **running** in its own
-shell while you're connected — open a second shell for the RDP/SSH client.
+shell — open a second shell for the RDP/SSH client.
 
 > **Finding instance IDs / IPs — two ways:**
 > - From your **deploy clone** (where the Terraform state lives): `terraform output`.
