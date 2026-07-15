@@ -515,9 +515,13 @@ best-available gateway and fails over natively across regions.
 > contacted. Test from a **native x64 (AMD64) Windows** client (a physical PC, an
 > x64 Windows VM, or a Windows EC2 instance), or on a **Windows-on-ARM** machine
 > install the **native ARM64** build **`GlobalProtectARM64.msi`** (not
-> `GlobalProtect64.msi`). The firewall portal serves only the 32/64-bit x64 MSIs,
-> so get the ARM64 one from the **PANW Customer Support Portal** (*Updates →
-> Software Updates → GlobalProtect Agent →* the version *→ `GlobalProtectARM64.msi`*).
+> `GlobalProtect64.msi`). The GP package activated on the firewall (`gp_client_version`)
+> **includes all three Windows MSIs (32-bit / x64 / ARM64) plus macOS**, so the
+> **portal already hosts the ARM64 build** — the installer path needs no portal
+> login; download it directly:
+> `https://<portal FQDN>/global-protect/msi/GlobalProtectARM64.msi`
+> (the portal's auto-detect landing page may hand a Windows-ARM browser the x64
+> build via User-Agent, which is why you have to pick the ARM64 file explicitly).
 > First **uninstall the x64 GP and reboot** (it left a broken driver), then
 > install the ARM64 MSI. macOS/Linux clients are also supported natively.
 
