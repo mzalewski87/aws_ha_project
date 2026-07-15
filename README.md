@@ -99,7 +99,7 @@ modules/panorama_config/    panos v2 resources (network + policy + GP + EDL)  �
 phase2-panorama-config/     separate panos workspace (SSM tunnel; vm-auth-key handoff; commit)
 optional/eks-deploy/        EKS + WordPress + custom EDL egress control (aws+helm+kubernetes)
 scripts/                    configure/register/marketplace/vm-auth-key/log-collector helpers
-docs/                       PREREQUISITES, CONFIGURATION, DEPLOYMENT, ADR, ROADMAP, GP design
+docs/                       PREREQUISITES, CONFIGURATION, DEPLOYMENT, ACCESS, ADR, ROADMAP, GP design
 ```
 
 ## Phases (see [docs/ROADMAP.md](docs/ROADMAP.md) for detail)
@@ -146,6 +146,7 @@ terraform apply                                # 3/GP/R2: converge (DC, then fla
 - **[docs/PREREQUISITES.md](docs/PREREQUISITES.md)** — install tools + log in to AWS from the CLI (do this first).
 - **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** — every parameter: which file, required?, where to source it.
 - **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** — the full deploy runbook (phases, verification, tests, teardown, troubleshooting).
+- **[docs/ACCESS.md](docs/ACCESS.md)** — 🔌 how to connect: RDP to the Windows DC, the Panorama GUI/API, and firewall CLI (all via SSM, no bastion).
 - **[docs/ARCHITECTURE-DECISION.md](docs/ARCHITECTURE-DECISION.md)** — the load-bearing design decisions.
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — phased build order.
 - **[docs/globalprotect-design.md](docs/globalprotect-design.md)** — GlobalProtect multi-region design.

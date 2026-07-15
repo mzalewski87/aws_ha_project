@@ -10,17 +10,20 @@ separate workspace from the base infrastructure.
 > 2. **[docs/CONFIGURATION.md](CONFIGURATION.md)** — exactly which parameter goes
 >    in which file and where to source each value.
 >
+> 🔌 **How do I connect to the DC (RDP) / Panorama / firewalls?** →
+> **[docs/ACCESS.md](ACCESS.md)** — one place with every remote-access command.
+>
 > **Where to run this:** this repo is the **source of truth**. Run `terraform
 > apply` from a **separate clone** with AWS credentials — not from the source
 > tree. `terraform validate` / `fmt -check` are the only Terraform commands run
 > in the source repo.
 
-**Contents:** [Architecture](#architecture) · [Prerequisites](#phase-0--prerequisites)
+**Contents:** [Architecture](#architecture) · **[Accessing the environment](ACCESS.md)** · [Prerequisites](#phase-0--prerequisites)
 · [Phase 1a](#phase-1a--base-networking--panorama) · [Phase 2a](#phase-2a--panorama-config-panos-workspace)
 · [Phase 1b](#phase-1b--firewalls--app--routing) · [Phase 2b](#phase-2b--register-firewalls-on-panorama)
 · [Phase 3](#phase-3--windows-dc) · [Phase GP](#phase-gp--globalprotect) ·
 [Phase R2](#phase-r2--region-b--global-accelerator) · [Optional EKS](#optional--eks--wordpress--edl)
-· [SSM access](#ssm-management-access) · [Verification](#verification) ·
+· [Access](ACCESS.md) · [Verification](#verification) ·
 [Traffic tests](#testing-traffic-flows) · [HA/failover](#ha--failover) ·
 [Teardown](#teardown) · [Troubleshooting](#troubleshooting) · [Variables](#key-variables)
 
@@ -347,10 +350,10 @@ aws ec2 get-password-data \
 > If this returns empty, the password isn't generated yet — EC2 needs a few
 > minutes after launch before `get-password-data` has anything to return.
 
-**Log in (RDP)** — the DC has **no Bastion and no route from the mgmt VPC's
-jump host** (spoke2 is behind the FW inspection path); instead it has its own
-SSM agent + IAM role (Windows Server 2022's AMI ships with the agent
-preinstalled), so connect directly:
+**Log in (RDP)** — full access guide in **[docs/ACCESS.md](ACCESS.md)**. The DC
+has **no Bastion and no route from the mgmt VPC's jump host** (spoke2 is behind
+the FW inspection path); instead it has its own SSM agent + IAM role (Windows
+Server 2022's AMI ships with the agent preinstalled), so connect directly:
 
 ```bash
 aws ssm start-session --target "$(terraform output -raw dc_instance_id)" \
@@ -691,22 +694,26 @@ permitted **before** nodes join, then the node group + Helm WordPress converge.
 
 ---
 
-## SSM management access
+## Accessing the environment
 
-PAN-OS/Panorama have no SSM agent — access is an SSM **RemoteHost** port-forward
-through the jump host:
+**➡️ Full remote-access guide: [docs/ACCESS.md](ACCESS.md)** — RDP to the Windows
+domain controller, the Panorama web GUI/API, and firewall CLI, with copy-paste
+commands. Everything is reached through AWS SSM Session Manager (no bastion, no
+public management IPs). The essentials:
 
-```bash
-PANORAMA_ID=$(terraform output -raw ssm_jumphost_instance_id)
-PANORAMA_IP=$(terraform output -raw panorama_private_ip)
-aws ssm start-session --target "$PANORAMA_ID" \
-  --document-name AWS-StartPortForwardingSessionToRemoteHost \
-  --parameters "{\"host\":[\"$PANORAMA_IP\"],\"portNumber\":[\"443\"],\"localPortNumber\":[\"44300\"]}"
-# then: https://localhost:44300  (Panorama GUI) or panos provider target
-```
+- **Windows DC (RDP):** the DC has its own SSM agent, so port-forward directly —
+  `aws ssm start-session --target $(terraform output -raw dc_instance_id)
+  --document-name AWS-StartPortForwardingSession
+  --parameters '{"portNumber":["3389"],"localPortNumber":["13389"]}'`, then RDP to
+  `localhost:13389` as `Administrator` (password: `aws ec2 get-password-data`).
+- **Panorama (GUI/API) & firewalls (SSH):** PAN-OS has no SSM agent, so
+  port-forward *through the jump host* (`AWS-StartPortForwardingSessionToRemoteHost`
+  to the target's private IP) — `https://localhost:44300` for Panorama,
+  `ssh admin@localhost -p 2211` for a firewall. `scripts/configure-panorama.sh
+  tunnel` wraps the Panorama one.
 
-`scripts/configure-panorama.sh tunnel` wraps this. Same pattern (different
-`host`) reaches the FW mgmt IPs for CLI.
+See **[docs/ACCESS.md](ACCESS.md)** for the exact commands, ports, and
+troubleshooting.
 
 ---
 
