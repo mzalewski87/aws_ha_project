@@ -149,7 +149,7 @@ variable "gp_tunnel_interface" {
 variable "gp_local_interface" {
   description = "Dataplane interface the GP gateway/tunnel binds its local-address to (the untrust interface)."
   type        = string
-  default     = "ethernet1/3"
+  default     = "loopback.1"
 }
 variable "gp_client_version" {
   description = "GlobalProtect app package version to download + activate on each firewall so the portal can serve the installer, or \"latest\" to auto-resolve the newest available. Firewalls need PANW update-server egress."

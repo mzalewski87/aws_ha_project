@@ -171,7 +171,7 @@ variable "gp_tunnel_interface" {
 variable "gp_local_interface" {
   description = "Dataplane interface the GP gateway/tunnel binds its local-address to (untrust)."
   type        = string
-  default     = "ethernet1/3"
+  default     = "loopback.1"
 }
 
 variable "gp_portal_name" {

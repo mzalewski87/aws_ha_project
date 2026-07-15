@@ -135,10 +135,26 @@ resource "panos_ethernet_interface" "untrust" {
   layer3 = {
     interface_management_profile = panos_interface_management_profile.mgmt.name
     ips = [
-      { name = var.untrust_ip_variable_name },       # per-device primary (.11/.12 / .20.11/.12) via template variable
-      { name = var.untrust_floating_variable_name }, # per-REGION floating (.10.100/.20.100) via template variable; GP binds here
+      { name = var.untrust_ip_variable_name }, # per-device primary (.11/.12 / .20.11/.12) via template variable
     ]
   }
+}
+
+# The floating IP (.100) that carries the public EIP is bound on a LOOPBACK, not
+# on the L3 untrust interface. WHY: a tunnel-mode GP gateway's SSL server binds
+# its tunnel node's local-address, which follows the interface's PRIMARY IP — so
+# with the floating as an untrust secondary the gateway bound the untrust primary
+# (.11, no EIP) and was unreachable, while PAN-OS also rejects the floating as
+# BOTH an untrust secondary AND the tunnel local-address ("ip already in use").
+# Putting the floating on a dedicated loopback (its only/primary IP) lets the
+# portal, gateway, and tunnel node all bind it cleanly. The floating stays an ENI
+# secondary at the AWS level (EIP + HA-plugin failover unchanged); traffic to it
+# arrives on untrust and is delivered locally to the loopback (same untrust zone).
+resource "panos_loopback_interface" "gp" {
+  location = local.tpl_loc
+  name     = "loopback.1"
+  comment  = "GP portal/gateway floating-IP bind"
+  ip       = [{ name = var.untrust_floating_variable_name }]
 }
 
 # Per-device untrust primary IP. The untrust interface (above) references this
@@ -203,7 +219,7 @@ resource "panos_tunnel_interface" "gp" {
 resource "panos_zone" "untrust" {
   location = local.tpl_vsys
   name     = "untrust"
-  network  = { layer3 = [panos_ethernet_interface.untrust.name] }
+  network  = { layer3 = [panos_ethernet_interface.untrust.name, panos_loopback_interface.gp.name] }
 }
 
 resource "panos_zone" "trust" {
@@ -228,6 +244,7 @@ resource "panos_virtual_router" "vr" {
     panos_ethernet_interface.untrust.name,
     panos_ethernet_interface.trust.name,
     panos_tunnel_interface.gp.name,
+    panos_loopback_interface.gp.name,
   ]
 }
 

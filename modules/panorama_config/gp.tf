@@ -206,7 +206,7 @@ resource "null_resource" "gp_tunnel_node" {
     local_if = var.gp_local_interface
     template = var.template_name
   }
-  depends_on = [panos_tunnel_interface.gp]
+  depends_on = [panos_tunnel_interface.gp, panos_loopback_interface.gp]
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
@@ -255,7 +255,7 @@ resource "panos_globalprotect_gateway" "gw" {
   # The address MUST exist on the interface config or PAN-OS rejects it with
   # "not a valid reference" (a DHCP interface with no static IP will not work).
   local_address = {
-    interface = panos_ethernet_interface.untrust.name
+    interface = panos_loopback_interface.gp.name
     ip        = { ipv4 = var.untrust_floating_variable_name }
   }
 
@@ -287,7 +287,7 @@ resource "panos_globalprotect_portal" "portal" {
     ssl_tls_service_profile = panos_ssl_tls_service_profile.gp[0].name
     # See the gateway's local_address comment above — bind to the floating IP.
     local_address = {
-      interface = panos_ethernet_interface.untrust.name
+      interface = panos_loopback_interface.gp.name
       ip        = { ipv4 = var.untrust_floating_variable_name }
     }
     client_auth = [{
