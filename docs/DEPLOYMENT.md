@@ -504,6 +504,20 @@ best-available gateway and fails over natively across regions.
 > standalone: `SERIALS="<s1> <s2> ..." PANORAMA_PASSWORD=... bash
 > scripts/deploy-gp-client.sh`.
 
+> **Client platform matters — match the CPU architecture.** The GlobalProtect
+> app installs a **kernel-mode driver** (`gpfltdrv.sys`). **Windows on ARM cannot
+> load an x64 kernel driver** (ARM64 Windows emulates x64 *user-mode* apps only),
+> so the **x64 GP installer fails on a Windows-ARM machine**: the driver INF
+> install returns `0xE000022F` / `Driver installation failed with error = 2`, the
+> `PanGPS` service can't initialize, and the UI shows **"Connection Failed —
+> Could not connect to the GlobalProtect service"** (`PanGPA.log`:
+> `CPanSocket::onConnect ... error code = 10061`) — the portal is never even
+> contacted. Test from a **native x64 (AMD64) Windows** client (a physical PC, an
+> x64 Windows VM, or a Windows EC2 instance), or install the **native ARM64
+> GlobalProtect app** (from the PANW support/CSP portal — the firewall portal
+> serves the x64 build) on a Windows-ARM machine. macOS/Linux clients are also
+> supported natively.
+
 > **HTTP→HTTPS portal redirect (optional, `enable_http_redirect`).** The GP
 > portal is HTTPS-only and PAN-OS has no built-in :80→:443 redirect for it;
 > Global Accelerator is L4 (TCP/UDP) and cannot issue an HTTP 301. The AWS-native
@@ -955,6 +969,16 @@ terraform destroy
 
 ## Troubleshooting
 
+- **GP app: "Connection Failed — Could not connect to the GlobalProtect
+  service"** (and `PanGPA.log` shows `CPanSocket::onConnect ... error code =
+  10061`, with the driver log reporting `0xE000022F` / `Driver installation
+  failed with error = 2` / `Driver is not installed`) → the GlobalProtect
+  kernel driver didn't install, so the local `PanGPS` service can't run and the
+  UI can't reach it. The portal is never contacted — this is **not** an
+  environment/config problem. The usual cause is a **CPU-architecture mismatch**:
+  the **x64 installer on a Windows-on-ARM** machine (ARM64 Windows can't load an
+  x64 kernel driver). Use a native x64 Windows client, or the native ARM64 GP app
+  — see the "Client platform matters" note under [Phase GP](#phase-gp--globalprotect).
 - **FW shows `Connected: no` despite valid device certs, licenses, and a
   correct PAN-OS version pair** → this is usually **not** network, cert, or
   license — it's a **silently failed Panorama commit**. `modules/
