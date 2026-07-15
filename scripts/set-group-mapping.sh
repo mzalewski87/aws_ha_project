@@ -31,13 +31,18 @@ VSYS="${VSYS:-vsys1}"
 MAP_NAME="${MAP_NAME:-gp-group-map}"
 LDAP_PROFILE="${LDAP_PROFILE:?set LDAP_PROFILE}"
 GROUP_DN="${GROUP_DN:?set GROUP_DN}"
+# How often the firewalls re-read group membership from AD. LOW (60s) so a user
+# newly added to the group can connect within ~a minute — PAN-OS's default 3600s
+# (1h) makes new members wait up to an hour, which is wrong for a test lab where
+# people add colleagues on the fly. Raise it for a large/production directory.
+UPDATE_INTERVAL="${GROUP_UPDATE_INTERVAL:-60}"
 BASE="https://${H}:${P}/api/"
 
 key="$(curl -sk "${BASE}?type=keygen&user=${U}&password=${PW}" | sed -n 's:.*<key>\(.*\)</key>.*:\1:p')"
 [ -n "${key}" ] || { echo "[group-mapping] keygen failed" >&2; exit 1; }
 
 xpath="/config/devices/entry[@name='localhost.localdomain']/template/entry[@name='${TPL}']/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='${VSYS}']/group-mapping/entry[@name='${MAP_NAME}']"
-element="<server-profile>${LDAP_PROFILE}</server-profile><update-interval>3600</update-interval><group-include-list><member>${GROUP_DN}</member></group-include-list>"
+element="<server-profile>${LDAP_PROFILE}</server-profile><update-interval>${UPDATE_INTERVAL}</update-interval><group-include-list><member>${GROUP_DN}</member></group-include-list>"
 
 resp="$(curl -sk --max-time 30 -G "${BASE}" \
   --data-urlencode "type=config" --data-urlencode "action=set" \

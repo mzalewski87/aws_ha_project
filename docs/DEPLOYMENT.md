@@ -429,6 +429,25 @@ not `alice@panw.labs`) and their AD password, and reaches the AWS spoke resource
 over the tunnel (split-tunnel `10.0.0.0/8`). A user who is NOT in `vpnusers`
 authenticates against AD but is refused the VPN by the allow-list.
 
+> **Group changes are not instant — allow ~1 minute.** The firewalls cache
+> `vpnusers` membership and re-read it from AD on a schedule
+> (`scripts/set-group-mapping.sh` sets the group-mapping `update-interval` to
+> **60s**). So a user you just added can't connect until the next refresh — if
+> they get `auth-failed` right after being added, wait ~a minute and retry. To
+> pick it up **immediately**, force a refresh on the firewall (SSH via the jump
+> host — see [ACCESS.md](ACCESS.md)):
+> ```
+> debug user-id refresh group-mapping all
+> ```
+> Verify what the firewall currently sees:
+> ```
+> show user group name "cn=vpnusers,cn=users,dc=panw,dc=labs"
+> ```
+> (This lists the members as `DOMAIN\user`, e.g. `panw\alice`. Once your user
+> appears there, GlobalProtect login works.) The firewall that matters is the
+> **active** one in the region the client connects to; a forced refresh targets
+> the box you SSH to, whereas the 60s auto-refresh updates all of them.
+
 ---
 
 ## Phase GP — GlobalProtect
