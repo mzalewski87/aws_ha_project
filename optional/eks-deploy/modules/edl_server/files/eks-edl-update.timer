@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh EKS egress EDL files (boot + daily)
+
+[Timer]
+OnBootSec=5min
+OnCalendar=*-*-* 03:17:00 UTC
+Persistent=true
+RandomizedDelaySec=10min
+Unit=eks-edl-update.service
+
+[Install]
+WantedBy=timers.target

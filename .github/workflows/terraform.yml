@@ -1,0 +1,48 @@
+name: terraform
+
+# Static checks only — no cloud creds, no apply. Mirrors the local gate:
+# `terraform fmt -check` + `terraform validate` on all three workspaces.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.15.5"
+
+jobs:
+  fmt:
+    name: fmt-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - run: terraform fmt -check -recursive
+
+  validate:
+    name: validate (${{ matrix.dir }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir:
+          - "."
+          - "phase2-panorama-config"
+          - "optional/eks-deploy"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: init (no backend, providers only)
+        working-directory: ${{ matrix.dir }}
+        run: terraform init -backend=false -input=false -no-color
+      - name: validate
+        working-directory: ${{ matrix.dir }}
+        run: terraform validate -no-color

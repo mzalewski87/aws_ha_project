@@ -1,0 +1,123 @@
+###############################################################################
+# Example tfvars — copy to terraform.tfvars and fill in.
+# Phase 1a (vpc / transit_gateway / bootstrap / panorama). Expand per ROADMAP.
+###############################################################################
+
+# --- Region / global ---------------------------------------------------------
+region_a        = "eu-central-1"
+region_b        = "eu-west-1"
+enable_region_b = false
+name_prefix     = "awsha"
+
+common_tags = {
+  Project   = "aws-vmseries-ha-globalprotect"
+  ManagedBy = "terraform"
+  Owner     = "REPLACE_ME"
+}
+
+# --- CIDR plan (Region A) — non-overlapping /16 per VPC ----------------------
+security_vpc_cidr = "10.10.0.0/16"
+mgmt_vpc_cidr     = "10.11.0.0/16"
+spoke1_vpc_cidr   = "10.12.0.0/16"
+spoke2_vpc_cidr   = "10.13.0.0/16"
+
+# --- Panorama ----------------------------------------------------------------
+panorama_private_ip       = "10.11.0.10"
+panorama_instance_type    = "m5.4xlarge"
+panorama_log_disk_size_gb = 2000
+panorama_template_stack   = "AWS-Transit-Stack"
+panorama_device_group     = "AWS-Transit-DG"
+
+# Explicit AMI (optional). Leave null to look up the Marketplace BYOL AMI
+# (requires a one-time console subscription — no CLI accept-terms on AWS).
+# panorama_ami_id = "ami-xxxxxxxxxxxxxxxxx"
+
+# VM auth key — leave empty. Phase 2a generates it and writes
+# ../panorama_vm_auth_key.auto.tfvars (auto-loaded by Phase 1b).
+panorama_vm_auth_key = ""
+
+# Panorama admin password — set automatically at first boot over SSH (PAN-OS on
+# AWS has no platform password injection like Azure). MUST equal the
+# panorama_password you put in phase2-panorama-config/terraform.tfvars.
+panorama_admin_password = "REPLACE_ME"
+# panorama_admin_username = "admin"   # default; change only if you renamed the PAN-OS admin
+# ssh_private_key_file = "~/.ssh/awsha-key.pem"   # default: ~/.ssh/<key_name>.pem
+
+# --- VM-Series firewalls -----------------------------------------------------
+# m5.xlarge = 4 vCPU/16 GiB (lab default: fits the 4 required ENIs, fewer flex
+# credits). Use "m5.2xlarge" (8 vCPU) for GP/throughput headroom. The Deployment
+# Profile's vCPU/FW MUST match (4 <-> m5.xlarge, 8 <-> m5.2xlarge). See CONFIGURATION.md.
+fw_instance_type          = "m5.xlarge"
+
+# --- PAN-OS versions (pinned + coordinated) ----------------------------------
+# Panorama can manage firewalls on the SAME or an OLDER PAN-OS, never NEWER.
+# So panorama_version MUST be >= vmseries_version (enforced at plan). Pin exact
+# versions (both must exist as Marketplace AMIs). Same value = matched deploy;
+# a newer Panorama train (e.g. "12.1.7") also works. Do NOT use "latest"/"*".
+vmseries_version          = "11.1.15"
+panorama_version          = "11.1.15"   # or a newer train, e.g. "12.1.7"
+
+# --- VM-Series license / device-cert (CSP Portal) ----------------------------
+fw_auth_code              = "" # VM-Series BYOL auth code
+fw_registration_pin_id    = "" # Assets -> Device Certificates -> Generate Registration PIN
+fw_registration_pin_value = ""
+
+# --- Misc --------------------------------------------------------------------
+dns_secondary = "1.1.1.1"
+# key_name is the EC2 key pair NAME (not a file path!). The matching .pem path
+# goes in ssh_private_key_file (see the Panorama section above).
+# key_name = "awsha-key"
+# EC2 key pairs are REGION-LOCAL. For a multi-region deploy, set ssh_public_key
+# to your public key so each region auto-creates the same-named key pair (no
+# manual per-region import). Leave empty if key_name already exists everywhere.
+# ssh_public_key = "ssh-rsa AAAA... you@host"
+
+# --- Spoke2 Windows DC (Phase 3) --------------------------------------------
+dc_domain_name = "panw.labs"
+dc_promote_to_dc = true
+# dc_safe_mode_password = "REPLACE_ME_Dsrm@Password1!"
+
+# AD test user, auto-created via SSM RunCommand once the forest is up (see
+# scripts/create-ad-test-user.sh) — used to test GlobalProtect LDAP auth
+# against the DC (Phase GP). Empty password = skip creation.
+dc_ad_test_user_name     = "admin"
+# dc_ad_test_user_password = "REPLACE_ME"
+
+# --- Region B + Global Accelerator (Phase R2) -------------------------------
+# (enable_region_b is set once near the top, in the Region / global section)
+enable_global_accelerator = false
+# HTTP->HTTPS 301 redirect for the portal FQDN: creates a small redirect ALB per
+# region behind the GA :80 listener (GP portal is HTTPS-only; GA is L4 and can't
+# redirect). Only effective with enable_global_accelerator = true. Adds ~1 ALB
+# per region (~$16/mo each); GP agents use HTTPS regardless, so it's a browser
+# convenience. Off by default.
+enable_http_redirect = false
+# Region B CIDR plan (mirrors Region A on 10.2x.0.0/16)
+security_vpc_cidr_b = "10.20.0.0/16"
+mgmt_vpc_cidr_b     = "10.21.0.0/16"
+spoke1_vpc_cidr_b   = "10.22.0.0/16"
+spoke2_vpc_cidr_b   = "10.23.0.0/16"
+# Keep Region B GP-focused by default (no app/DC); set true for full parity.
+region_b_create_app = false
+# region_b_create_dc = true stands up a SECOND AD DC in Region B, joined to the
+# Region A forest with multi-master replication (region-outage LDAP failover).
+# It promotes as an ADDITIONAL DC automatically: root derives dc_is_additional,
+# the primary DC IP, and the promotion credential — which is the AD test user
+# (dc_ad_test_user_name@dc_domain_name), made a Domain Admin by
+# scripts/create-ad-test-user.sh. So dc_ad_test_user_password MUST be set.
+# Sequence matters — see docs/DEPLOYMENT.md "Region B additional DC".
+region_b_create_dc  = false
+
+# --- Custom domain (OPTIONAL — branded, browser-trusted GP portal) -----------
+# Off by default: GP works on the raw EIPs / GA anycast IPs with a self-signed
+# cert. Turn on for a real domain. Two-step (see docs/CONFIGURATION.md):
+#   1) apply with cert_mode="self_signed" -> read output custom_domain_name_servers
+#   2) delegate the subdomain NS at your parent domain (one-time), then re-apply
+#      with cert_mode="letsencrypt" to issue a wildcard cert via DNS-01.
+enable_custom_domain = false
+# custom_domain_subdomain_zone      = "lab.example.com"   # subdomain you delegate
+# custom_domain_portal_hostname     = "gp"                # -> gp.lab.example.com
+# custom_domain_gateway_labels      = { region_a = "gw-a", region_b = "gw-b" }
+# custom_domain_cert_mode           = "self_signed"       # or "letsencrypt"
+# custom_domain_letsencrypt_email   = "you@example.com"
+# custom_domain_letsencrypt_staging = true                # false = trusted cert

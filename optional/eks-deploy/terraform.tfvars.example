@@ -1,0 +1,19 @@
+###############################################################################
+# optional/eks-deploy — copy to terraform.tfvars. Fill from the root outputs:
+#   cd ../.. && terraform output
+###############################################################################
+region      = "eu-central-1"
+name_prefix = "awsha-a"
+
+transit_gateway_id = "tgw-xxxxxxxx"      # root output transit_gateway_ids.region_a
+mgmt_vpc_id        = "vpc-xxxxxxxx"      # Region A MGMT VPC
+edl_subnet_id      = "subnet-xxxxxxxx"   # a MGMT VPC subnet (e.g. ssm)
+security_vpc_cidr  = "10.10.0.0/16"
+
+eks_vpc_cidr   = "10.14.0.0/16"
+edl_private_ip = "10.11.10.20"
+
+wordpress_password = "REPLACE_ME"
+
+# Two-step: apply, read the WordPress LB hostname, then set this + re-apply.
+# wordpress_lb_hostname = "xxxx.elb.eu-central-1.amazonaws.com"

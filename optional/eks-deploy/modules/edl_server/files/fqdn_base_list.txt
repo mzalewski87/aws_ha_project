@@ -1,0 +1,42 @@
+# EKS Egress FQDN Baseline (AWS)
+#
+# Fallback list served as a PAN-OS URL External Dynamic List. Sourced from the
+# AWS/EKS private-cluster egress requirements + the WordPress workload image/
+# chart repos. ${REGION} is substituted at generation time.
+#
+# NOTE: trailing slashes are NOT included here — generate_eks_edl.py appends "/"
+# to every non-comment line. PAN-OS URL EDL requires the trailing slash for
+# wildcard matches to work. Lines starting with # or ; are comments.
+
+# --- EKS control plane + AWS APIs ---
+*.eks.amazonaws.com
+eks.${REGION}.amazonaws.com
+sts.${REGION}.amazonaws.com
+ec2.${REGION}.amazonaws.com
+
+# --- ECR (image pulls) + S3 (ECR layers) ---
+*.dkr.ecr.${REGION}.amazonaws.com
+api.ecr.${REGION}.amazonaws.com
+*.s3.${REGION}.amazonaws.com
+
+# --- Node bootstrap / OS package mirrors (Amazon Linux / Ubuntu) ---
+amazonlinux.${REGION}.amazonaws.com
+*.amazonaws.com
+archive.ubuntu.com
+security.ubuntu.com
+
+# --- Public registries (add-ons: CNI, CoreDNS, kube-proxy, ingress-nginx) ---
+registry.k8s.io
+*.pkg.dev
+public.ecr.aws
+*.cloudfront.net
+
+# --- WordPress workload: image pulls (Bitnami via Docker Hub) ---
+docker.io
+registry-1.docker.io
+auth.docker.io
+production.cloudflare.docker.com
+*.docker.com
+
+# --- WordPress workload: Helm chart repos ---
+charts.bitnami.com

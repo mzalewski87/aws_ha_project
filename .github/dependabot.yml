@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Terraform provider updates per workspace.
+  - package-ecosystem: "terraform"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "terraform"
+    directory: "/phase2-panorama-config"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "terraform"
+    directory: "/optional/eks-deploy"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  # Keep the GitHub Actions in the CI workflow current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

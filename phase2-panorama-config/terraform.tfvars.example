@@ -1,0 +1,86 @@
+###############################################################################
+# Phase 2a example tfvars — copy to terraform.tfvars and fill in.
+# Run AFTER the SSM tunnel to Panorama is up (scripts/configure-panorama.sh).
+###############################################################################
+
+# panos provider connection (through the SSM port-forward)
+panorama_hostname = "127.0.0.1"
+panorama_port     = 44300
+panorama_username = "admin"
+panorama_password = "REPLACE_ME"
+
+# Panorama activation (serial + license + device certificate).
+# serial: from CSP (register the Panorama auth code). Enables license fetch.
+# device OTP: CSP -> Assets -> Device Certificates -> Generate OTP for this serial
+#   (single-use, 60-min TTL) — required so Panorama gets a device cert; without it
+#   firewalls that have device certs refuse to connect (stay Connected=no).
+panorama_serial_number = ""          # 12-digit Panorama serial from CSP
+panorama_device_otp    = ""          # generate fresh right before apply (60-min TTL)
+
+# Object names — MUST match the FW init-cfg (root panorama_template_stack / _device_group)
+template_name       = "AWS-Transit-Template"
+template_stack_name = "AWS-Transit-Stack"
+device_group_name   = "AWS-Transit-DG"
+
+# Dataplane / routing (defaults match the Region A CIDR plan)
+untrust_gateway_ip   = "10.10.10.1"
+trust_gateway_ip     = "10.10.20.1"
+mgmt_permitted_cidrs = ["10.10.0.0/16", "10.11.0.0/16"]
+
+# App DNAT (from `cd .. && terraform output`)
+app_dnat_public_ip = "10.10.10.100" # FW untrust floating IP
+app_private_ip     = "10.12.0.10"   # Spoke1 Apache
+
+# --- Firewall serials (Phase 2b handoff — REQUIRED for Phase GP) -------------
+# After Phase 2b registers the firewalls, they get PAN-OS serials. Paste them
+# here keyed by fw name so phase2 can push the per-device untrust IP overrides
+# (primary + floating, by serial) and activate the GP agent per firewall.
+# Empty = those per-device steps are skipped (fine for the pre-GP baseline).
+# Get them from: register-fw-panorama.sh output, or the Panorama GUI (Panorama
+# -> Managed Devices), or `show devices connected` via the API.
+# fw_serials = {
+#   fw1a = "0012A100XXXXX", fw2a = "0012A100YYYYY"   # Region A
+#   fw1b = "0012A100ZZZZZ", fw2b = "0012A100WWWWW"   # Region B (Phase R2)
+# }
+# The per-device untrust IP maps below already default to the standard CIDR plan
+# for all four firewalls — only override if you changed fw_host_offsets in root.
+# fw_untrust_static_ips   = { fw1a = "10.10.10.11/24", ... }
+# fw_untrust_floating_ips = { fw1a = "10.10.10.100/32", ... }
+
+# --- GlobalProtect (Phase GP) — enable once you have a server cert ----------
+enable_globalprotect = false
+# gp_ip_pool             = ["10.10.200.0/24"]
+# gp_split_tunnel_routes = ["10.0.0.0/8"]
+# gp_dns_servers         = ["10.13.0.10"]   # AD DC (single region). Multi-region:
+#                                           # list BOTH DCs, e.g. ["10.13.0.10","10.23.0.10"]
+# gp_external_gateways = [
+#   { name = "gw-eu-central", address = "gw-eu-central.example.com", priority = "1" },
+#   # Region B appended in Phase R2:
+#   # { name = "gw-eu-west", address = "gw-eu-west.example.com", priority = "2" },
+# ]
+# Floating IPs the GP portal/gateway bind to (destination of the inbound-GP
+# allow rule). Region A only by default; add Region B for multi-region:
+# gp_local_ips = ["10.10.10.100", "10.20.10.100"]
+# gp_ip_pool   = ["10.10.200.0/24"]   # per-region, non-overlapping (Region B: 10.20.200.0/24)
+# gp_server_cert_pem = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+# gp_server_key_pem  = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+
+# GP app (agent) package version downloaded + ACTIVATED on each firewall so the
+# portal can serve the installer (else the portal "Download" returns errors.txt
+# "Could not find file"). "latest" auto-resolves the newest available. The
+# firewalls need egress to the PANW update servers.
+# gp_client_version = "latest"
+
+# Auth: "local" (default) uses gp_local_users below. "ldap" authenticates
+# against the spoke2 AD DC (promote it first — root dc_promote_to_dc) using
+# the auto-created AD test user (root dc_ad_test_user_name/_password) as the
+# bind account. See docs/DEPLOYMENT.md Phase GP.
+# gp_local_users = { "vpnuser" = "REPLACE_ME" }
+# gp_auth_method        = "ldap"
+# gp_ldap_server_ip     = ""              # root output dc_private_ip (Region A DC)
+# gp_ldap_base_dn       = "DC=panw,DC=labs"   # from root dc_domain_name
+# gp_ldap_bind_dn       = "admin@panw.labs"   # root dc_ad_test_user_name @ dc_domain_name
+# gp_ldap_bind_password = "REPLACE_ME"        # root dc_ad_test_user_password
+# Multi-region LDAP failover: after the Region B DC is up, add its IP so PAN-OS
+# fails over on a region outage (root output dc_private_ip_b).
+# gp_ldap_extra_server_ips = ["10.23.0.10"]

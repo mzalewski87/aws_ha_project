@@ -1,0 +1,14 @@
+[Unit]
+Description=Regenerate EKS Egress External Dynamic Lists
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/eks-edl/generate_eks_edl.py
+TimeoutStartSec=120
+Restart=on-failure
+RestartSec=300
+
+[Install]
+WantedBy=multi-user.target
