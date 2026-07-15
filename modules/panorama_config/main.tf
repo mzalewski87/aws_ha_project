@@ -316,6 +316,30 @@ resource "panos_nat_policy" "rules" {
       }
     },
     {
+      # GlobalProtect clients reaching INTERNAL resources (vpn -> trust: the
+      # spokes, AD DC for DNS, etc.). The GP client IP pool (gp_ip_pool, e.g.
+      # 10.10.200.0/24) sits inside the security VPC CIDR, so AWS treats return
+      # traffic to it as VPC-local and drops it (no ENI owns those addresses) —
+      # DNS queries reach the DC but the replies never come back, so GP clients
+      # can't resolve names or reach internal services. SNAT the pool to the
+      # trust interface's own (routable) IP so replies return to the firewall and
+      # are un-NATed back into the tunnel. Symmetric (out and back via trust), so
+      # no asymmetric-return drop. (The outbound-snat rule above only covers
+      # vpn -> untrust; internet itself is split-tunneled direct from the client.)
+      name                  = "gp-internal-snat"
+      source_zones          = ["vpn"]
+      destination_zone      = ["trust"]
+      source_addresses      = ["any"]
+      destination_addresses = ["any"]
+      service               = "any"
+      nat_type              = "ipv4"
+      source_translation = {
+        dynamic_ip_and_port = {
+          interface_address = { interface = panos_ethernet_interface.trust.name }
+        }
+      }
+    },
+    {
       name                  = "inbound-app-dnat"
       source_zones          = ["untrust"]
       destination_zone      = ["untrust"]
