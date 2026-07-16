@@ -350,6 +350,20 @@ resource "panos_nat_policy" "rules" {
       destination_translation = {
         translated_address = var.app_private_ip
       }
+      # SNAT the inbound app traffic to the firewall's trust IP as well. WHY:
+      # CloudFront -> the internet-facing NLB -> targets the FW untrust IP -> this
+      # DNAT -> Apache. With destination-NAT only, Apache replies straight to the
+      # NLB node's IP (same security VPC) — the reply is delivered locally and
+      # BYPASSES the firewall's un-NAT, so the NLB sees a reply from the wrong
+      # source and drops it (client connections time out; only the TCP health
+      # check, which is source=NLB-node either way, passes). Source-NAT to the
+      # trust interface makes Apache reply to the firewall, which un-NATs and
+      # returns via the NLB. Symmetric return.
+      source_translation = {
+        dynamic_ip_and_port = {
+          interface_address = { interface = panos_ethernet_interface.trust.name }
+        }
+      }
     },
   ]
 }
