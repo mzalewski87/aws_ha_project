@@ -411,11 +411,18 @@ locals {
       log_end               = true
     },
     {
-      name                  = "inbound-app"
-      source_zones          = ["untrust"]
-      destination_zones     = ["trust"]
-      source_addresses      = ["any"]
-      destination_addresses = [var.app_private_ip]
+      name              = "inbound-app"
+      source_zones      = ["untrust"]
+      destination_zones = ["trust"]
+      source_addresses  = ["any"]
+      # PRE-NAT destination: PAN-OS matches security policy on the ORIGINAL
+      # (pre-NAT) addresses but the POST-NAT zone. Inbound-app traffic hits the
+      # untrust floating VIP (.100 = app_dnat_public_ip); inbound-app-dnat then
+      # DNATs it to the Apache IP and routes it into the trust zone. So the rule
+      # must match dst = the VIP (.100), NOT the translated Apache IP — using the
+      # post-NAT address (var.app_private_ip) never matched, so real CloudFront/
+      # NLB traffic fell through to deny-all (only the TCP health check passed).
+      destination_addresses = ["${var.app_dnat_public_ip}/32"]
       applications          = ["web-browsing", "ssl"]
       services              = ["application-default"]
       action                = "allow"

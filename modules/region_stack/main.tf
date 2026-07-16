@@ -282,7 +282,17 @@ module "loadbalancer" {
 
   vpc_id     = module.vpc_security.vpc_id
   subnet_ids = module.vpc_security.subnet_ids_by_role["untrust"]
-  target_ips = values(module.firewall.untrust_primary_ips)
+  # Target the untrust FLOATING IP (.100), NOT the per-device primaries. WHY:
+  #  - The app DNAT rule (inbound-app-dnat) only matches dst = the floating VIP
+  #    (.100); traffic to a primary (.11/.12) matches no NAT rule and is dropped.
+  #  - In Active/Passive HA only the ACTIVE firewall can forward; the floating IP
+  #    lives on whichever FW is active (AWS HA plugin moves it on failover), so a
+  #    single .100 target is always the active FW. Targeting both primaries would
+  #    black-hole the half sent to the passive unit.
+  # Health check on :80 exercises the full DNAT path (.100:80 -> Apache), so the
+  # target only goes healthy when Apache is actually reachable end-to-end.
+  target_ips        = [module.firewall.floating_ip]
+  health_check_port = 80
 
   tags = var.tags
 }
