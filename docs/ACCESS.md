@@ -200,3 +200,53 @@ host lives in Region A).
 Creating/removing GlobalProtect users and the `vpnusers` group (over RDP **and**
 headless via SSM RunCommand) is documented in
 [DEPLOYMENT.md → Managing VPN users](DEPLOYMENT.md#managing-vpn-users).
+
+---
+
+## Addressing reference
+
+Default CIDR plan (`name_prefix` `awsha`). Region A = `eu-central-1`, Region B =
+`eu-west-1`. Public IPs (EIPs / anycast) are examples from one deployment — yours
+will differ; read them from `terraform output`.
+
+### Region A (primary — hosts Panorama)
+
+| Component | Address |
+|----------|---------|
+| Security / transit VPC | `10.10.0.0/16` |
+| Mgmt VPC | `10.11.0.0/16` |
+| Spoke1 (app) VPC | `10.12.0.0/16` |
+| Spoke2 (AD DC) VPC | `10.13.0.0/16` |
+| FW mgmt (eth0) | fw1 `10.10.0.11`, fw2 `10.10.0.12` |
+| FW untrust primary (e1/3) | fw1 `10.10.10.11`, fw2 `10.10.10.12` (subnet `10.10.10.0/24`) |
+| FW untrust **floating** (EIP-backed, GP/app bind; on `loopback.1`) | `10.10.10.100` → EIP (e.g. `18.198.234.193`) |
+| FW trust (e1/2) | DHCP in `10.10.20.0/24` |
+| FW HA2 (e1/1) | fw1 `10.10.30.11`, fw2 `10.10.30.12` (subnet `10.10.30.0/24`) |
+| Panorama | `10.11.0.10` |
+| SSM jump host | `10.11.10.0/24` (ssm subnet) |
+| Apache app | `10.12.0.10` |
+| AD domain controller | `10.13.0.10` (VPC resolver `10.13.0.2`) |
+| GP client IP pool | `10.10.200.0/24` |
+| GP DNS pushed to clients | `10.13.0.10` (the DC) |
+
+### Region B (secondary)
+
+| Component | Address |
+|----------|---------|
+| Security VPC | `10.20.0.0/16` |
+| Mgmt VPC | `10.21.0.0/16` |
+| Spoke1 VPC | `10.22.0.0/16` |
+| Spoke2 (replica DC) VPC | `10.23.0.0/16` |
+| FW mgmt | fw1 `10.20.0.11`, fw2 `10.20.0.12` |
+| FW untrust floating (EIP-backed) | `10.20.10.100` → EIP (e.g. `52.208.204.217`) |
+| FW HA2 | fw1 `10.20.30.11`, fw2 `10.20.30.12` |
+| Replica AD DC | `10.23.0.10` |
+
+### Global / public entry points
+
+| Purpose | Address |
+|---------|---------|
+| GlobalProtect **portal** (anycast) | Global Accelerator IPs (e.g. `166.117.92.35`, `3.33.160.182`) → `gp.<domain>` |
+| GP **gateway** Region A | Region A EIP → `gw-a.<domain>` |
+| GP **gateway** Region B | Region B EIP → `gw-b.<domain>` |
+| App (web) | **CloudFront** distribution → the Spoke1 Apache app (via NLB → FW DNAT) |

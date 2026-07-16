@@ -187,9 +187,9 @@ variable "gp_ip_pool" {
 }
 
 variable "gp_split_tunnel_routes" {
-  description = "Access routes pushed to GP clients (split tunnel include)."
+  description = "Routes pushed to GP clients as the tunnel access-route. [\"0.0.0.0/0\"] = FULL tunnel (ALL client traffic, incl. internet, egresses via the firewall EIP). For split tunnel, list only the internal CIDRs (e.g. [\"10.0.0.0/8\"]) so internet goes direct from the client."
   type        = list(string)
-  default     = ["10.0.0.0/8"]
+  default     = ["0.0.0.0/0"]
 }
 
 variable "gp_dns_servers" {

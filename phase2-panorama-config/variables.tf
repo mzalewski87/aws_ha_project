@@ -162,8 +162,9 @@ variable "gp_ip_pool" {
   default = ["10.10.200.0/24"]
 }
 variable "gp_split_tunnel_routes" {
+  # ["0.0.0.0/0"] = full tunnel (all traffic via GP -> FW EIP); list internal CIDRs for split tunnel.
   type    = list(string)
-  default = ["10.0.0.0/8"]
+  default = ["0.0.0.0/0"]
 }
 variable "gp_dns_servers" {
   type    = list(string)

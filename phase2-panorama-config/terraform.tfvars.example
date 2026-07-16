@@ -50,7 +50,7 @@ app_private_ip     = "10.12.0.10"   # Spoke1 Apache
 # --- GlobalProtect (Phase GP) — enable once you have a server cert ----------
 enable_globalprotect = false
 # gp_ip_pool             = ["10.10.200.0/24"]
-# gp_split_tunnel_routes = ["10.0.0.0/8"]
+# gp_split_tunnel_routes = ["0.0.0.0/0"]   # full tunnel (default); list internal CIDRs like ["10.0.0.0/8"] for split tunnel
 # gp_dns_servers         = ["10.13.0.10"]   # AD DC (single region). Multi-region:
 #                                           # list BOTH DCs, e.g. ["10.13.0.10","10.23.0.10"]
 # gp_external_gateways = [
