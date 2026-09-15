@@ -180,6 +180,16 @@ resource "panos_template_variable" "untrust_ip_default" {
 # per-device overrides (by serial) are set in phase2 (null_resource, XML API)
 # once serials are known. GP gateway/portal local_address references this var,
 # so a single shared template drives correct per-region GP.
+# Template-level DEFAULT for the GP client pool, so the template is valid before
+# any firewall is registered. The real per-region values are set as per-device
+# overrides by serial in phase2 (see gp.tf's ip_pool for why this must not be a
+# literal shared across regions).
+resource "panos_template_variable" "gp_ip_pool_default" {
+  location = local.tpl_loc
+  name     = var.gp_ip_pool_variable_name
+  type     = { ip_netmask = var.gp_ip_pool[0] }
+}
+
 resource "panos_template_variable" "untrust_floating_default" {
   location = local.tpl_loc
   name     = var.untrust_floating_variable_name
@@ -349,16 +359,32 @@ resource "panos_nat_policy" "rules" {
       nat_type              = "ipv4"
       source_translation = {
         dynamic_ip_and_port = {
-          # interface_address (even with an explicit `ip`) requires that IP
-          # to be configured on the interface itself, which PAN-OS refuses
-          # when DHCP client is enabled ("DHCP interface IP address must be
-          # empty"). translated_address has no such requirement — it's just
-          # the literal NAT pool. Without this, PAN-OS SNATs to the
-          # interface's DHCP-leased primary address, which has no EIP:
-          # outbound packets reach the IGW and are silently dropped (no
-          # public address to translate to), so replies never come back.
-          # Use the floating IP instead, the Elastic-IP-backed address.
-          translated_address = [var.app_dnat_public_ip]
+          # SNAT to the GP/EIP floating address — but resolve it PER DEVICE by
+          # naming the loopback, not by hardcoding the IP.
+          #
+          # Why not translated_address: NAT policy lives in the DEVICE GROUP,
+          # which is shared by every region, and template VARIABLES
+          # ($fw_untrust_floating) only expand inside a TEMPLATE. A literal
+          # therefore pins every firewall to ONE region's floating IP. With
+          # multi-region enabled that broke Region B outright: its firewalls
+          # SNATted to 10.10.10.100 — an address they do not own — so GP
+          # clients and spokes had NO internet, packets reaching the IGW with
+          # an untranslatable source and being dropped silently (no deny in
+          # the traffic log). Live-diagnosed 2026-09-15.
+          #
+          # Why not interface_address on the untrust ethernet: that SNATs to
+          # its DHCP-leased primary (.11/.12), which carries no EIP — the same
+          # silent blackhole.
+          #
+          # loopback.1 holds ONLY the floating IP, as a /32 sourced from the
+          # per-device template variable (Region A 10.10.10.100, Region B
+          # 10.20.10.100), and it is static, so the "DHCP interface IP address
+          # must be empty" restriction does not apply. The interface NAME is
+          # identical on every firewall while its ADDRESS differs per region,
+          # which is exactly what a shared device group needs.
+          interface_address = {
+            interface = panos_loopback_interface.gp.name
+          }
         }
       }
     },
