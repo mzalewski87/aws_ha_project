@@ -458,6 +458,31 @@ Add-ADGroupMember -Identity vpnusers -Members alice
 Get-ADGroupMember vpnusers        # verify
 ```
 
+> ### ⚠️ Log in with the BARE username — `alice`, never `alice@panw.labs`
+>
+> The LDAP profile matches on **`sAMAccountName`**, so PAN-OS builds the bind DN
+> as `CN=<what you typed>,CN=Users,DC=panw,DC=labs`. Type the UPN and it looks
+> for `CN=alice@panw.labs,...`, which does not exist:
+>
+> ```
+> gateway-auth  failure  alice@panw.labs
+> Authentication failed: Invalid username or password
+> ```
+>
+> This is **the** most common self-inflicted GP login failure here, and it is
+> confusing because the **portal may still accept the UPN** while the **gateway
+> rejects it** — so the client shows "downloading configuration…" and only then
+> "Authentication Failed". Hit live on 2026-09-15.
+>
+> Check which form was used before suspecting LDAP, group membership, or the
+> certificate — the firewall log names it explicitly:
+> ```
+> show log globalprotect direction equal backward query equal "(status neq success)"
+> ```
+> Prefer the UPN form instead? Switch the LDAP profile's `login_attribute` to
+> `userPrincipalName` — but then the bare name stops working. It is one or the
+> other, not both.
+
 The new user logs in to GlobalProtect with the **bare sAMAccountName** (`alice`,
 not `alice@panw.labs`) and their AD password, and reaches the AWS spoke resources
 over the tunnel (split-tunnel `10.0.0.0/8`). A user who is NOT in `vpnusers`
