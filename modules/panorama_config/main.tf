@@ -216,10 +216,57 @@ resource "panos_tunnel_interface" "gp" {
 ###############################################################################
 # Zones
 ###############################################################################
+# A zone may only reference an interface that is IMPORTED into its vsys
+# (config/.../vsys/entry[@name='vsys1']/import/network/interface). The panos
+# provider writes that import entry for panos_ethernet_interface and
+# panos_tunnel_interface, but NOT for panos_loopback_interface — so on a
+# from-scratch deploy panos_zone.untrust fails with
+#   "untrust -> network -> layer3 'loopback.1' is not a valid reference"
+# even though the loopback was just created successfully. (Same class of gap as
+# the rename case documented in CLAUDE.md.) Add the member via the raw XML API
+# before the zone is created. Idempotent: `action=set` on an existing member is
+# a no-op.
+resource "null_resource" "loopback_vsys_import" {
+  triggers = {
+    interface = panos_loopback_interface.gp.name
+    template  = var.template_name
+    vsys      = var.vsys
+  }
+  depends_on = [panos_loopback_interface.gp]
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      BASE="https://${var.panorama_hostname}:${var.panorama_port}/api/"
+      KEY="$(curl -sk --max-time 20 \
+        --data-urlencode "type=keygen" \
+        --data-urlencode "user=${var.panorama_username}" \
+        --data-urlencode "password=$PANORAMA_PASSWORD" \
+        "$BASE" | sed -n 's:.*<key>\(.*\)</key>.*:\1:p')"
+      [ -n "$KEY" ] || { echo "[loopback-import] keygen failed" >&2; exit 1; }
+      XPATH="/config/devices/entry[@name='localhost.localdomain']/template/entry[@name='${var.template_name}']/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='${var.vsys}']/import/network/interface"
+      RESP="$(curl -sk --max-time 20 \
+        --data-urlencode "type=config" --data-urlencode "action=set" \
+        --data-urlencode "xpath=$XPATH" \
+        --data-urlencode "element=<member>${panos_loopback_interface.gp.name}</member>" \
+        --data-urlencode "key=$KEY" "$BASE")"
+      echo "$RESP" | grep -q 'status="success"' \
+        || { echo "[loopback-import] failed: $RESP" >&2; exit 1; }
+      echo "[loopback-import] ${panos_loopback_interface.gp.name} imported into ${var.vsys}"
+    EOT
+    environment = {
+      PANORAMA_PASSWORD = var.panorama_password
+    }
+  }
+}
+
 resource "panos_zone" "untrust" {
   location = local.tpl_vsys
   name     = "untrust"
   network  = { layer3 = [panos_ethernet_interface.untrust.name, panos_loopback_interface.gp.name] }
+
+  depends_on = [null_resource.loopback_vsys_import]
 }
 
 resource "panos_zone" "trust" {
