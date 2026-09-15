@@ -141,6 +141,17 @@ terraform apply                                # 3/GP/R2: converge (DC, then fla
 #   R2: enable_region_b=true + enable_global_accelerator=true, then apply
 ```
 
+## Interactive architecture viewer
+
+A zero-dependency browser app — interactive walkthrough, animated traffic
+flows, and a failure simulator for this architecture. Published from
+[`viewer/`](viewer/) to GitHub Pages on every push to `main`:
+
+**https://mzalewski87.github.io/aws_ha_project/**
+
+Open it in a full tab; it is a canvas app and uses the width. Runs locally too
+(`open viewer/index.html`, no server needed). See [viewer/README.md](viewer/README.md).
+
 ## Documentation
 
 - **[docs/PREREQUISITES.md](docs/PREREQUISITES.md)** — install tools + log in to AWS from the CLI (do this first).

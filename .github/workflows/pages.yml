@@ -1,0 +1,63 @@
+###############################################################################
+# Publish the interactive architecture viewer to GitHub Pages.
+#
+# The viewer is a zero-dependency static app (no build step, no node_modules),
+# so this just uploads viewer/ as-is. Keeping the source in main — rather than
+# hand-maintaining a gh-pages branch — means the published page can never drift
+# from what is in the repo.
+#
+# Result: https://<owner>.github.io/<repo>/  serves viewer/index.html full-tab.
+###############################################################################
+name: Deploy viewer to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'viewer/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch: # lets you republish without touching the app
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two publishes race; always let the newest win, but don't cancel a
+# run that is already mid-deploy (that can leave Pages in a half-updated state).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sanity-check the viewer bundle
+        run: |
+          set -euo pipefail
+          test -f viewer/index.html || { echo "viewer/index.html missing"; exit 1; }
+          # Every local asset the page references must exist, or Pages serves a
+          # silently broken app (the browser just logs 404s).
+          missing=0
+          while read -r asset; do
+            [ -f "viewer/$asset" ] || { echo "missing asset: viewer/$asset"; missing=1; }
+          done < <(grep -oE '(src|href)="[^"]+"' viewer/index.html \
+                     | sed -E 's/^(src|href)="//; s/"$//' \
+                     | grep -vE '^(https?:|data:|#|mailto:)')
+          [ "$missing" -eq 0 ] || exit 1
+          echo "viewer bundle OK"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: viewer
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

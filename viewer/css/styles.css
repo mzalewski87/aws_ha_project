@@ -1,0 +1,1134 @@
+/* ==========================================================================
+   AWS VM-Series HA & Multi-Region GlobalProtect - Interactive Viewer CSS
+   Enterprise Cybersecurity Dark Theme with PANW & AWS Styling
+   ========================================================================== */
+
+:root {
+  --bg-dark: #070B14;
+  --bg-canvas: #0B0F19;
+  --bg-panel: rgba(15, 23, 42, 0.85);
+  --bg-panel-solid: #0F172A;
+  --bg-card: rgba(30, 41, 59, 0.7);
+  --bg-hover: rgba(51, 65, 85, 0.6);
+  
+  --border-color: #1E293B;
+  --border-light: #334155;
+  --border-focus: #38BDF8;
+
+  --text-main: #F8FAFC;
+  --text-muted: #94A3B8;
+  --text-dim: #64748B;
+
+  /* Brand Accents */
+  --panw-orange: #FA582D;
+  --panw-orange-glow: rgba(250, 88, 45, 0.4);
+  --panw-flame: #FF6B35;
+  --aws-squid: #232F3E;
+  --aws-orange: #FF9900;
+  --aws-purple: #A855F7;
+  
+  /* Status Colors */
+  --status-active: #10B981;
+  --status-passive: #64748B;
+  --status-failure: #EF4444;
+  --status-action: #F59E0B;
+  --status-cyan: #00F0FF;
+  
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji";
+  --font-mono: "JetBrains Mono", "Fira Code", SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --shadow-panel: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==========================================================================
+   Header Bar
+   ========================================================================== */
+.app-header {
+  height: 64px;
+  background-color: var(--bg-panel-solid);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.brand-logos {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-logos svg {
+  width: 34px;
+  height: 34px;
+}
+
+.brand-divider {
+  width: 1px;
+  height: 24px;
+  background-color: var(--border-light);
+}
+
+.project-titles h1 {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-titles h1 .badge-ver {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  background-color: rgba(250, 88, 45, 0.15);
+  color: var(--panw-orange);
+  border: 1px solid rgba(250, 88, 45, 0.3);
+  border-radius: 12px;
+}
+
+.project-titles p {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Mode Switcher Tabs */
+.header-center {
+  display: flex;
+  align-items: center;
+  background: var(--bg-card);
+  padding: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.mode-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  background: transparent;
+}
+
+.mode-tab:hover {
+  color: var(--text-main);
+  background-color: var(--bg-hover);
+}
+
+.mode-tab.active {
+  color: #fff;
+  background-color: var(--panw-orange);
+  box-shadow: 0 2px 8px var(--panw-orange-glow);
+}
+
+.mode-tab svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+}
+
+/* Header Right Actions */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lang-switch-group {
+  display: flex;
+  align-items: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.btn-lang {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.btn-lang:hover {
+  color: var(--text-main);
+  background: var(--bg-hover);
+}
+
+.btn-lang.active {
+  color: #FFFFFF;
+  background: var(--panw-orange);
+  box-shadow: 0 0 6px var(--panw-orange-glow);
+}
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-box svg {
+  position: absolute;
+  left: 10px;
+  width: 16px;
+  height: 16px;
+  stroke: var(--text-dim);
+}
+
+.search-box input {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px 6px 32px;
+  color: var(--text-main);
+  font-size: 12px;
+  width: 180px;
+  transition: all 0.2s ease;
+}
+
+.search-box input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  width: 240px;
+  background: var(--bg-dark);
+}
+
+.btn-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-icon:hover {
+  color: var(--text-main);
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+}
+
+.btn-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+}
+
+.btn-repo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.btn-repo:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-light);
+}
+
+/* ==========================================================================
+   Main Layout Container
+   ========================================================================== */
+.app-container {
+  position: relative;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  background-color: var(--bg-canvas);
+  background-image: 
+    radial-gradient(circle at 50% 50%, rgba(30, 41, 59, 0.4) 0%, transparent 80%),
+    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+}
+
+/* Diagram Canvas Area */
+.diagram-viewport {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  user-select: none;
+}
+
+.diagram-viewport:active {
+  cursor: grabbing;
+}
+
+#architecture-svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Canvas Viewport Controls */
+.viewport-controls {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 50;
+  background: var(--bg-panel);
+  backdrop-filter: blur(12px);
+  padding: 6px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-panel);
+}
+
+.quick-nav-bar {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 50;
+  background: var(--bg-panel);
+  backdrop-filter: blur(14px);
+  padding: 5px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-panel);
+}
+
+.nav-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: 2px;
+}
+
+.nav-btn {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.nav-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+  border-color: var(--border-light);
+}
+
+.nav-btn.active {
+  background: var(--border-light);
+  color: #FFFFFF;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+}
+
+/* ==========================================================================
+   Left Interactive Control Panel
+   ========================================================================== */
+.left-panel {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  width: 360px;
+  max-height: calc(100vh - 120px);
+  background: var(--bg-panel);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.left-panel.collapsed {
+  transform: translateX(-380px);
+}
+
+.panel-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-header h2 {
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-main);
+}
+
+.panel-header h2 svg {
+  width: 18px;
+  height: 18px;
+  color: var(--panw-orange);
+}
+
+.panel-content {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Flow Selector Options */
+.flow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flow-card {
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flow-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-light);
+}
+
+.flow-card.active {
+  border-color: var(--flow-color, var(--panw-orange));
+  background: rgba(30, 41, 59, 0.9);
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.15);
+}
+
+.flow-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flow-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* Step Narration Card */
+.narration-box {
+  background: rgba(11, 15, 25, 0.8);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  margin-top: 10px;
+}
+
+.narration-step-indicator {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--panw-orange);
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.narration-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 6px;
+}
+
+.narration-body {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.playback-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+
+.btn-playback {
+  padding: 6px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-playback:hover {
+  background: var(--bg-hover);
+}
+
+.btn-playback.primary {
+  background: var(--panw-orange);
+  border-color: var(--panw-orange);
+  color: #fff;
+}
+
+/* Scenarios Cards */
+.scenario-card {
+  padding: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.scenario-card:hover {
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+}
+
+.scenario-card.active {
+  border-color: var(--status-failure);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.scenario-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.scenario-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--status-failure);
+}
+
+.scenario-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.scenario-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* ==========================================================================
+   Right Detail Drawer (Component Technical Spec)
+   ========================================================================== */
+.right-drawer {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 420px;
+  max-height: calc(100vh - 120px);
+  background: var(--bg-panel);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform: translateX(460px);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.right-drawer.open {
+  transform: translateX(0);
+}
+
+.drawer-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drawer-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.drawer-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.drawer-title-group h3 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.drawer-title-group span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.drawer-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.drawer-summary {
+  font-size: 13px;
+  color: var(--text-main);
+  line-height: 1.5;
+  margin-bottom: 20px;
+  background: rgba(30, 41, 59, 0.5);
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--panw-orange);
+}
+
+.spec-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.spec-table th, .spec-table td {
+  padding: 10px 12px;
+  font-size: 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.spec-table th {
+  color: var(--text-dim);
+  font-weight: 600;
+  width: 35%;
+}
+
+.spec-table td {
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+/* ==========================================================================
+   Presentation Walkthrough Mode Bottom Bar
+   ========================================================================== */
+.presentation-bar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(840px, 90vw);
+  background: var(--bg-panel);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel);
+  z-index: 70;
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.3s ease;
+}
+
+.presentation-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 40px);
+}
+
+.presentation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.slide-counter {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--panw-orange);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.presentation-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.presentation-content {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.presentation-content h4 {
+  color: #fff;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.presentation-content ul, .presentation-content ol {
+  margin-left: 20px;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+
+.callout-box {
+  background: rgba(30, 41, 59, 0.7);
+  border-left: 3px solid var(--panw-orange);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-main);
+}
+
+.callout-box.warning {
+  border-left-color: var(--status-action);
+}
+
+.presentation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+}
+
+.benefits-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.benefit-card {
+  background: var(--bg-card);
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+}
+
+.benefit-card .badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.2);
+  color: var(--status-active);
+  margin-bottom: 4px;
+}
+
+.benefit-card h5 {
+  font-size: 12px;
+  color: #fff;
+  margin-bottom: 2px;
+}
+
+.benefit-card p {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+/* ==========================================================================
+   SVG Architecture Diagram Elements Styling
+   ========================================================================== */
+.region-box {
+  fill: rgba(15, 23, 42, 0.5);
+  stroke: #334155;
+  stroke-width: 2;
+  rx: 16;
+  transition: all 0.3s ease;
+}
+
+.region-box.region-a {
+  stroke: #475569;
+}
+
+.region-box.region-b {
+  stroke: #334155;
+  stroke-dasharray: 6 6;
+}
+
+.region-label {
+  font-size: 15px;
+  font-weight: 700;
+  fill: #F8FAFC;
+  letter-spacing: 0.02em;
+}
+
+.region-sublabel {
+  font-size: 11px;
+  font-weight: 500;
+  fill: #94A3B8;
+}
+
+/* VPC Boxes */
+.vpc-box {
+  fill: rgba(30, 41, 59, 0.4);
+  stroke: #475569;
+  stroke-width: 1.5;
+  rx: 12;
+  transition: all 0.2s ease;
+}
+
+.vpc-box.security-vpc {
+  fill: rgba(250, 88, 45, 0.04);
+  stroke: rgba(250, 88, 45, 0.4);
+}
+
+.vpc-box.mgmt-vpc {
+  fill: rgba(56, 189, 248, 0.04);
+  stroke: rgba(56, 189, 248, 0.4);
+}
+
+.vpc-box.spoke-vpc {
+  fill: rgba(168, 85, 247, 0.04);
+  stroke: rgba(168, 85, 247, 0.4);
+}
+
+.vpc-title {
+  font-size: 12px;
+  font-weight: 700;
+  fill: #E2E8F0;
+}
+
+.vpc-cidr {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  fill: #94A3B8;
+}
+
+/* Subnet Boxes */
+.subnet-box {
+  fill: rgba(15, 23, 42, 0.6);
+  stroke: #334155;
+  stroke-width: 1;
+  rx: 8;
+  transition: all 0.2s ease;
+}
+
+.subnet-label {
+  font-size: 10px;
+  font-weight: 600;
+  fill: #94A3B8;
+}
+
+.subnet-cidr {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  fill: #64748B;
+}
+
+/* Node Elements */
+.arch-node {
+  cursor: pointer;
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+
+.arch-node:hover {
+  filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.5));
+}
+
+.arch-node.selected rect {
+  stroke: var(--border-focus) !important;
+  stroke-width: 2.5 !important;
+}
+
+.arch-node.highlighted {
+  filter: drop-shadow(0 0 14px rgba(250, 88, 45, 0.8));
+}
+
+.arch-node.failing {
+  animation: pulse-fail 1.2s infinite;
+}
+
+@keyframes pulse-fail {
+  0% { filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.6)); }
+  50% { filter: drop-shadow(0 0 18px rgba(239, 68, 68, 1)); }
+  100% { filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.6)); }
+}
+
+.node-card {
+  fill: #1E293B;
+  stroke: #475569;
+  stroke-width: 1.5;
+  rx: 8;
+}
+
+.node-card.fw-active {
+  fill: #1E293B;
+  stroke: var(--status-active);
+  stroke-width: 2;
+}
+
+.node-card.fw-passive {
+  fill: #131D2D;
+  stroke: #475569;
+  stroke-dasharray: 4 4;
+}
+
+.node-title {
+  font-size: 11px;
+  font-weight: 700;
+  fill: #FFFFFF;
+}
+
+.node-subtitle {
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  fill: #94A3B8;
+}
+
+.node-badge {
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.node-badge.active-bg {
+  fill: var(--status-active);
+}
+
+.node-badge.passive-bg {
+  fill: var(--status-passive);
+}
+
+/* Architecture Lines */
+.arch-link {
+  fill: none;
+  stroke: #475569;
+  stroke-width: 2;
+  transition: all 0.3s ease;
+}
+
+.arch-link.ha-link {
+  stroke: #FA582D;
+  stroke-width: 2.5;
+  stroke-dasharray: 4 4;
+}
+
+.arch-link.peering-link {
+  stroke: #38BDF8;
+  stroke-width: 2.5;
+  stroke-dasharray: 6 6;
+}
+
+.arch-link.flow-active {
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+
+/* Animated Particles */
+.flow-particle {
+  pointer-events: none;
+}
+
+/* Collapsed summary card */
+.collapsed-card {
+  fill: #1E293B;
+  stroke: #475569;
+  stroke-width: 1.5;
+  rx: 12;
+  cursor: pointer;
+}
+
+.collapsed-card:hover {
+  stroke: var(--panw-orange);
+}
+
+/* Fix SVG Icon Sizing */
+.node-icon svg {
+  width: 32px;
+  height: 32px;
+  max-width: 32px;
+  max-height: 32px;
+  display: block;
+}
+
+.drawer-icon svg {
+  width: 36px;
+  height: 36px;
+  max-width: 36px;
+  max-height: 36px;
+  display: block;
+}
+
+/* Cluster Overview & Toggle Buttons */
+.cluster-overview-card {
+  fill: rgba(30, 41, 59, 0.7);
+  stroke: var(--panw-orange);
+  stroke-width: 1.5;
+  rx: 10;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.cluster-overview-card:hover {
+  fill: rgba(30, 41, 59, 0.95);
+  filter: drop-shadow(0 0 12px var(--panw-orange-glow));
+}
+
+.btn-container-toggle {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-container-toggle:hover rect {
+  fill: var(--panw-orange);
+}
+
+.btn-container-toggle:hover text {
+  fill: #FFFFFF;
+}
+
+/* ==========================================================================
+   Overlay/canvas collision fixes
+   --------------------------------------------------------------------------
+   .left-panel (360px) and .right-drawer (420px) are absolutely-positioned
+   overlays sitting ON TOP of a full-bleed .diagram-viewport, and the drawer
+   (z-60) also covers the LEVEL bar (z-50). So opening either one hid diagram
+   content behind it, and opening the drawer hid the level switcher entirely.
+
+   Fix: inset the canvas by whatever is currently open, and slide the two
+   right-hand control clusters clear of the drawer. The SVG keeps a fixed
+   viewBox with preserveAspectRatio, so narrowing its box simply rescales the
+   drawing into the space that is actually visible instead of hiding its edges.
+   ========================================================================== */
+
+.diagram-viewport {
+  transition: left 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* :has() lets a parent react to descendant state; supported by every browser
+   this app already targets. Anything older just keeps the previous behaviour. */
+.app-container:has(.left-panel:not(.collapsed)) .diagram-viewport {
+  left: 396px;
+  width: auto;
+  right: 0;
+}
+
+.app-container:has(.right-drawer.open) .diagram-viewport {
+  right: 456px;
+  width: auto;
+}
+
+.app-container:has(.left-panel:not(.collapsed)):has(.right-drawer.open) .diagram-viewport {
+  left: 396px;
+  right: 456px;
+  width: auto;
+}
+
+/* Keep the LEVEL bar and the zoom cluster out from under the drawer. */
+.quick-nav-bar,
+.viewport-controls {
+  transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-container:has(.right-drawer.open) .quick-nav-bar,
+.app-container:has(.right-drawer.open) .viewport-controls {
+  right: 456px;
+}
+
+/* The drawer is taller than the level bar; on short viewports let it scroll
+   rather than push its footer off-screen. */
+.right-drawer,
+.left-panel {
+  max-height: calc(100vh - 140px);
+}
