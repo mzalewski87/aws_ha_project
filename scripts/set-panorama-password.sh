@@ -87,17 +87,29 @@ fi
 
 # 2) Apply the hash to the admin user and commit. Must use an interactive pty
 #    (-tt) fed by a here-doc; PAN-OS does not run ssh-exec commands.
-echo "[set-pw] setting admin phash + commit"
-ssh -tt "${SSH_OPTS[@]}" "${PANO_USER}@127.0.0.1" >"/tmp/ssm-pano-set.$$.log" 2>&1 <<EOF || true
-set cli pager off
-configure
-set mgt-config users ${PANO_USER} phash ${HASH}
-commit description "terraform: set admin password"
-exit
-exit
-EOF
+#
+#    CRITICAL: do NOT close stdin right after `commit`. A commit on a freshly
+#    booted Panorama runs for several MINUTES; feeding `exit` (or letting the
+#    here-doc EOF) tears the session down before the commit finishes, so the
+#    password silently never takes effect. Instead hold stdin open with a long
+#    sleep and let step 3 kill the session as soon as the API confirms the new
+#    password — that is the real "commit finished" signal.
+echo "[set-pw] setting admin phash + commit (holding the session open until the commit lands)"
+{
+  printf 'set cli pager off\n'
+  printf 'configure\n'
+  printf 'set mgt-config users %s phash %s\n' "${PANO_USER}" "${HASH}"
+  printf 'commit description "terraform: set admin password"\n'
+  sleep "${PANO_COMMIT_WAIT:-900}"
+} | ssh -tt "${SSH_OPTS[@]}" "${PANO_USER}@127.0.0.1" >"/tmp/ssm-pano-set.$$.log" 2>&1 &
+SET_PID=$!
+# make sure the held-open SSH session is reaped even on an early exit
+cleanup() { kill "${SSM_PID}" "${API_PID}" "${SET_PID:-}" 2>/dev/null || true; }
+trap cleanup EXIT
 
 # 3) Verify the new password authenticates against the API (what Phase 2a needs).
+#    This doubles as the commit-completion probe, so the budget must comfortably
+#    exceed a cold-boot commit (default 20 min).
 echo "[set-pw] verifying API keygen with the new password"
 aws ssm start-session --target "${JUMP}" \
   --document-name AWS-StartPortForwardingSessionToRemoteHost \
@@ -105,15 +117,30 @@ aws ssm start-session --target "${JUMP}" \
   >"/tmp/ssm-pano-api.$$.log" 2>&1 &
 API_PID=$!
 ENC_PW="$(PW="${PANO_PASSWORD}" python3 -c 'import urllib.parse,os;print(urllib.parse.quote(os.environ["PW"],safe=""))')"
+VERIFY_TRIES="${PANO_VERIFY_TRIES:-240}" # 240 x 5s = 20 min
 ok=0
-for _ in $(seq 1 30); do
+for _ in $(seq 1 "${VERIFY_TRIES}"); do
   resp="$(curl -sk --max-time 8 "https://127.0.0.1:${VP}/api/?type=keygen&user=${PANO_USER}&password=${ENC_PW}" 2>/dev/null || true)"
   if printf '%s' "${resp}" | grep -q "<key>"; then ok=1; break; fi
   sleep 5
 done
+kill "${SET_PID}" 2>/dev/null || true
 if [ "${ok}" -eq 1 ]; then
   echo "[set-pw] OK: admin password is set and the API authenticates."
 else
-  echo "[set-pw] WARN: could not confirm API keygen yet (commit may still be finishing)." >&2
-  echo "        If Phase 2a keygen fails, re-run: terraform apply -target=...panorama" >&2
+  # MUST fail hard. Exiting 0 here makes Terraform record
+  # terraform_data.set_admin_password as complete, so re-running Phase 1a is a
+  # no-op and the failure resurfaces much later as an opaque Phase 2a
+  # "API Error: Invalid Credential" (403).
+  echo "[set-pw] ERROR: admin password did not take effect — API keygen still fails" >&2
+  echo "        after $((VERIFY_TRIES * 5 / 60)) min. Last 20 lines of the SSH session:" >&2
+  # REDACT before printing: PAN-OS runs on a pty and echoes every command back,
+  # so this log contains the literal `set mgt-config users <user> phash $1$...`
+  # line. That is the MD5-crypt hash of the Panorama admin password — cheap to
+  # crack — and this tail goes to stderr, i.e. into Terraform/CI output. Strip
+  # the hash (and any stray $1$/$5$/$6$ crypt string) before it is shown.
+  tail -n 20 "/tmp/ssm-pano-set.$$.log" 2>/dev/null \
+    | sed -E -e 's/(phash)[[:space:]]+[^[:space:]]+/\1 <redacted>/g' \
+             -e 's/\$[0-9a-z]+\$[^[:space:]]+/<redacted-hash>/g' >&2 || true
+  exit 1
 fi
