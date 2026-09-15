@@ -257,8 +257,33 @@ for testing):
 terraform output fw_public_eips   # {"region_a": "<eip>", ...}
 
 openssl req -x509 -newkey rsa:2048 -keyout gp-key.pem -out gp-cert.pem \
-  -days 365 -nodes -subj "/CN=<fw-public-eip-or-your-dns-name>"
+  -days 365 -nodes -subj "/CN=<fw-public-eip>" \
+  -addext "subjectAltName=IP:<fw-public-eip>"
 ```
+
+> **Always pass `-addext subjectAltName=…`.** A `-subj "/CN=…"` alone produces a
+> certificate with **no SAN**, and CN-only name matching was removed from every
+> current TLS stack — such a cert is rejected outright rather than merely
+> warned about. Use `IP:` entries for bare addresses and `DNS:` for hostnames.
+
+**Multi-region (Phase R2): one cert must cover every endpoint**, because the
+portal is reached through Global Accelerator while each gateway is dialled on
+its own regional EIP. Build the SAN list from the Terraform outputs:
+
+```bash
+terraform output -raw global_accelerator_dns_name        # portal FQDN
+terraform output global_accelerator_static_ips           # 2 anycast IPs
+terraform output fw_public_eips                          # one EIP per region
+
+openssl req -x509 -newkey rsa:2048 -keyout gp-key.pem -out gp-cert.pem \
+  -days 365 -nodes -subj "/CN=<ga-dns-name>" \
+  -addext "subjectAltName=DNS:<ga-dns-name>,IP:<ga-ip-1>,IP:<ga-ip-2>,IP:<eip-region-a>,IP:<eip-region-b>"
+
+openssl x509 -in gp-cert.pem -noout -subject -ext subjectAltName   # verify
+```
+
+Miss an entry and that one endpoint fails the name check while the others work
+— which looks like a per-region outage rather than a certificate problem.
 
 Paste the two PEMs into `phase2-panorama-config/terraform.tfvars` as **heredocs**.
 `.tfvars` files can't call functions — `file()`/`path.module` are rejected there

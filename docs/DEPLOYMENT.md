@@ -853,9 +853,22 @@ Missing either half looks identical: `show high-availability state` reports
 show high-availability state
 ```
 Expect one firewall `State: active`, the other `State: passive`,
-`Connection status: up` on both, `Running Configuration: synchronized`. If
-config changed while the peers were disconnected, force a resync from the
-active unit: `request high-availability sync-to-remote running-config`.
+`Connection status: up` on both, `Running Configuration: synchronized`.
+
+On a clean deploy the pair normally comes up `not synchronized`, because HA is
+configured *after* Panorama has already pushed config. Force a resync from the
+**active** unit:
+
+```
+request high-availability sync-to-remote running-config
+```
+
+> **It prompts for confirmation** — `Executing this command will overwrite the
+> candidate configuration on the peer and trigger a commit on the peer. Do you
+> want to continue? (y or n)`. Run interactively and answer `y`; a scripted run
+> must feed `y` on stdin **and keep the session open** while the peer commits
+> (it takes minutes), or the resync is cut short and the pair stays
+> `not synchronized`.
 
 ### Testing failover
 
@@ -1005,6 +1018,69 @@ terraform destroy
     --destination <Panorama-ENI> --protocol tcp --destination-port 3978`, then
     `start-network-insights-analysis`). It walks the actual SG/NACL/route-table
     chain and gives a definitive `NetworkPathFound: true/false`.
+- **A panos apply fails with `Initialization error … dial tcp 127.0.0.1:44300:
+  connect: connection refused`** → this is **not** a provider or credentials
+  problem: the SSM tunnel died. Session Manager idle-times-out, and a real
+  deploy has long gaps between phases (firewall first boot ~35 min, the DC
+  ~20 min), so the tunnel opened for Phase 2a is frequently gone by Phase GP.
+  Re-open it (`bash scripts/configure-panorama.sh tunnel`) and re-apply. Check
+  before every panos apply — read the password from the environment and POST it,
+  so it stays out of the URL and your shell history:
+  ```bash
+  read -rs PANORAMA_PASSWORD && export PANORAMA_PASSWORD   # prompts, no echo
+  curl -sk https://localhost:44300/api/ \
+    --data-urlencode "type=keygen" --data-urlencode "user=admin" \
+    --data-urlencode "password=$PANORAMA_PASSWORD" | head -c 40
+  # a <key>… response means the tunnel is up; "connection refused" means it died
+  ```
+- **`show user group-mapping state all` reports `Number of Groups: 0` and
+  `Last Action Time: (Never)`** → check whether you are looking at the
+  **passive** HA member. PAN-OS runs the group-mapping agent only on the
+  **active** unit, so a passive firewall legitimately shows zero groups and a
+  never-run agent; this is normal, not a broken LDAP profile. Confirm with
+  `show high-availability state | match "State:"` and re-check on the active
+  peer, where the same command should list
+  `cn=<gp_vpn_group>,cn=users,dc=…` and a recent `Last Action Time`. (Easy to
+  trip over right after a failover test, when the unit you were using has
+  become passive.)
+- **A firewall never registers and `show system info | match serial` says
+  `serial: unknown`** → check the bootstrap result FIRST, before suspecting
+  credits, PIN validity or networking:
+  ```
+  show system bootstrap status
+  ```
+  A `License Install  Failed … Error Response while consuming from Salesforce
+  consume service and non-recoverable error occur` is a **transient CSP-side
+  failure**, despite saying "non-recoverable", and nothing in the bootstrap
+  flow retries it. One firewall of a pair can hit it while its peer licenses
+  fine, leaving a half-licensed HA pair that looks healthy at the AWS level
+  while Panorama simply never sees it. Fix by retrying on the firewall (SSH via
+  the jump host):
+  ```
+  request license fetch auth-code <your auth code>
+  ```
+  It returns `VM Device License installed.`, the firewall gets its serial, and
+  it connects to Panorama within about a minute.
+- **The first EC2 launch in a NEW region fails with `PendingVerification`**
+  ("Your request for accessing resources in this region is being validated …
+  allow up to 4 hours") → an AWS account-side check on a young account, not a
+  config problem. It typically clears in minutes. Probe it, then re-run the
+  same targeted apply:
+  ```bash
+  aws ec2 run-instances --dry-run --region <region> \
+    --image-id <ami> --instance-type m5.xlarge --subnet-id <subnet>
+  # DryRunOperation = cleared;  PendingVerification = still waiting
+  ```
+- **A `commit-all` times out at partial progress (e.g. stuck at 75 %) with one
+  device `config sent to device / PEND`** → that device was unreachable or
+  rebooting when the push was issued. Most often self-inflicted: running a
+  panos apply while a firewall is being stopped/started (a failover test, an
+  instance replacement). The Panorama-side job can stay `ACT` and is not
+  stoppable, but the device-side commits still complete — check on the firewall
+  itself with `show jobs all`. Once every firewall is back and HA reads
+  `synchronized`, simply re-run
+  `bash scripts/configure-panorama.sh commit`; the fresh job succeeds.
+  **Never overlap a failover test with a config push.**
 - **`OptInRequired` on launch** → AMI not subscribed (Phase 0). Verify with
   `scripts/accept-marketplace-terms.sh`, which does a real subscription check
   (`ec2 run-instances --dry-run`: `OptInRequired` = not subscribed,

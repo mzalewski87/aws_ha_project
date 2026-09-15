@@ -85,6 +85,20 @@ locals {
         { description = "HA1 ICMP heartbeat", from_port = -1, to_port = -1, protocol = "icmp", cidr_blocks = [local.sec] },
       ]
     }
+    # NOTE ON INTERFACE NAMING: the "eth1/1" in the SG description below is
+    # STALE and wrong — read the ENI ordering from modules/firewall, not from
+    # these strings. The real, load-bearing mapping is:
+    #     device_index 0 -> mgmt        (eth0)
+    #     device_index 1 -> HA2         (ethernet1/1)  <- AWS platform requirement
+    #     device_index 2 -> trust       (ethernet1/2)
+    #     device_index 3 -> untrust     (ethernet1/3)
+    # ethernet1/1 MUST be the HA2 link on AWS; untrust is ethernet1/3. Getting
+    # this backwards cannot be fixed by reordering config — the firewalls have
+    # to be recreated (see docs/DEPLOYMENT.md, "Configuring native PAN-OS HA").
+    # The description string itself is left as-is deliberately: an
+    # aws_security_group description is immutable, so editing it would force
+    # the SG to be REPLACED, churning the firewalls' ENI attachments on every
+    # existing deployment — too much blast radius for a comment fix.
     fw-untrust = {
       description = "FW eth1/1 untrust - FW inspects, SG permissive"
       ingress     = [{ description = "All (FW enforces policy; incl. GP TCP 443 / UDP 4501)", from_port = 0, to_port = 0, protocol = "-1", cidr_blocks = ["0.0.0.0/0"] }]

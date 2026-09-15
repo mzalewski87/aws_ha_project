@@ -218,8 +218,29 @@ privilege, the deployer needs at least:
   in the Software NGFW Deployment Profile (see
   [CONFIGURATION.md](CONFIGURATION.md#where-the-panw-values-come-from-csp-portal)).
   They must agree: license 4 vCPU/FW ⇔ deploy `m5.xlarge` (or 8 ⇔ `m5.2xlarge`).
-- **Elastic IPs:** default limit is 5 per region; this project uses several
-  (NAT GWs + FW public EIP). Raise if needed.
+- **Elastic IPs — a raise is effectively MANDATORY, not "if needed".** The AWS
+  default is **5 per region** and **one region of this project consumes exactly
+  5 by itself**: 2 NAT GW EIPs in the security VPC + 2 in the mgmt VPC (one per
+  AZ) + 1 firewall public EIP. So *any* pre-existing EIP in the region makes
+  Phase 1b fail part-way through with:
+  ```
+  Error: creating EC2 EIP: api error AddressLimitExceeded:
+  The maximum number of addresses has been reached.
+  ```
+  (The failure is clean — raise the quota and re-run the same targeted apply;
+  it converges with no state surgery.) The NAT gateways are one-per-AZ with no
+  variable to reduce them, so raise the quota **before** deploying — in **every**
+  region you will deploy to, Region B included:
+  ```bash
+  for R in eu-central-1 eu-west-1; do
+    aws service-quotas request-service-quota-increase --region "$R" \
+      --service-code ec2 --quota-code L-0263D0A3 --desired-value 20
+  done
+  # check it landed (Value should read 20):
+  aws service-quotas get-service-quota --region eu-central-1 \
+    --service-code ec2 --quota-code L-0263D0A3 --query 'Quota.Value'
+  ```
+  EIP increases are usually auto-approved within minutes.
 - **Marketplace subscribe is one-time per account** and console-only — see
   [Phase 0](DEPLOYMENT.md#phase-0--prerequisites) / `scripts/accept-marketplace-terms.sh`.
 
