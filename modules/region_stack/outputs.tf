@@ -105,3 +105,8 @@ output "http_redirect_alb_arn" {
   value       = var.enable_http_redirect ? module.http_redirect_alb[0].alb_arn : null
   description = "HTTP->HTTPS redirect ALB ARN — register as the Global Accelerator :80 endpoint. Null unless enable_http_redirect."
 }
+
+output "app_cloudfront_hosted_zone_id" {
+  description = "Route53 hosted-zone ID of the app CloudFront distribution (for alias records)."
+  value       = var.create_app ? module.cloudfront[0].distribution_hosted_zone_id : ""
+}

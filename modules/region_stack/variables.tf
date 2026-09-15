@@ -212,3 +212,15 @@ variable "enable_http_redirect" {
   type        = bool
   default     = false
 }
+
+variable "app_aliases" {
+  description = "Alternate domain names for the app CloudFront distribution (e.g. [\"web.lab.example.com\"]). Needs app_acm_certificate_arn."
+  type        = list(string)
+  default     = []
+}
+
+variable "app_acm_certificate_arn" {
+  description = "ARN of a us-east-1 ACM certificate covering app_aliases. Empty = default *.cloudfront.net certificate."
+  type        = string
+  default     = ""
+}

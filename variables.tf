@@ -343,3 +343,9 @@ variable "region_b_create_dc" {
   type        = bool
   default     = false
 }
+
+variable "web_app_hostname" {
+  description = "Hostname for the Apache app under custom_domain_subdomain_zone, e.g. \"web\" -> web.lab.example.com. Served over HTTPS by CloudFront with an auto-renewing ACM certificate. Empty = no custom domain for the app. Requires enable_custom_domain = true."
+  type        = string
+  default     = ""
+}

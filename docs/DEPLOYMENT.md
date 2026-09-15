@@ -81,21 +81,27 @@ flowchart TB
 Text fallback (same topology, for terminals without Mermaid rendering):
 
 ```
-                  AWS Global Accelerator (anycast, portal FQDN)
-                     │                                  │
-        ┌────────────┴─────────────┐        ┌───────────┴──────────────┐
-        │ REGION A (hosts Panorama) │        │ REGION B (secondary)      │
-        │ security VPC 10.10/16     │        │ security VPC 10.20/16     │
-        │   FW1 active ⇅ FW2 passive │        │   FW1 active ⇅ FW2 passive │
-        │   eth0 mgmt / e1/1 ha2     │        │   (managed by Region A    │
-        │   e1/2 trust / e1/3 untrust│  TGW   │    Panorama via peering)   │
-        │ mgmt VPC 10.11/16          │◀─peer─▶│                           │
-        │   Panorama + SSM jump host │        │                           │
-        │ spoke1 app, spoke2 AD DC   │        │ spoke2 replica AD DC      │
-        └────────────┬──────────────┘        └────────────┬──────────────┘
-                     │ Transit Gateway (appliance mode)    │
-             spoke ↔ spoke / spoke ↔ internet inspected by the FWs
-                                  AD replication ⇄ between the two DCs
+                AWS Global Accelerator (anycast, portal FQDN)
+                 │                                          │
+                 ▼                                          ▼
+┌─────────────────────────────────┐        ┌─────────────────────────────────┐
+│ REGION A (primary)              │        │ REGION B (secondary / DR)       │
+│ hosts Panorama + SSM jump host  │        │ managed by Region A Panorama    │
+│                                 │<-peer->│ over cross-region TGW peering   │
+│ security VPC   10.10.0.0/16     │        │                                 │
+│   FW1 active / FW2 passive (HA) │        │ security VPC   10.20.0.0/16     │
+│   eth0 mgmt   | e1/1 ha2        │        │   FW1 active / FW2 passive (HA) │
+│   e1/2 trust  | e1/3 untrust    │        │   same interface map as A       │
+│   loopback.1  = floating EIP    │        │                                 │
+│                                 │        │   loopback.1  = floating EIP    │
+│ mgmt VPC       10.11.0.0/16     │        │                                 │
+│ spoke1 app     10.12.0.0/16     │        │                                 │
+│ spoke2 AD DC   10.13.0.0/16     │        │ spoke2 replica 10.23.0.0/16     │
+└─────────────────────────────────┘        └─────────────────────────────────┘
+
+               Transit Gateway (appliance mode) in each region:
+       spoke <-> spoke and spoke <-> internet are inspected by the FWs
+            AD replication runs between the two domain controllers
 ```
 
 **Failover behavior**
@@ -485,7 +491,10 @@ Get-ADGroupMember vpnusers        # verify
 
 The new user logs in to GlobalProtect with the **bare sAMAccountName** (`alice`,
 not `alice@panw.labs`) and their AD password, and reaches the AWS spoke resources
-over the tunnel (split-tunnel `10.0.0.0/8`). A user who is NOT in `vpnusers`
+over the tunnel. Note the default is a **FULL tunnel**
+(`gp_split_tunnel_routes = ["0.0.0.0/0"]`) — the client's internet traffic also
+egresses via the firewall EIP, which is what makes it inspected. A user who is
+NOT in `vpnusers`
 authenticates against AD but is refused the VPN by the allow-list.
 
 > **Group changes are not instant — allow ~1 minute.** The firewalls cache

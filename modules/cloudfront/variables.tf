@@ -44,3 +44,15 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "aliases" {
+  description = "Alternate domain names (CNAMEs) served by the distribution, e.g. [\"web.lab.example.com\"]. Requires acm_certificate_arn — CloudFront rejects an alias without a matching certificate."
+  type        = list(string)
+  default     = []
+}
+
+variable "acm_certificate_arn" {
+  description = "ARN of an ACM certificate IN us-east-1 covering every entry in `aliases`. CloudFront accepts viewer certificates only from us-east-1, regardless of where the distribution or origin live. Empty = serve the default *.cloudfront.net certificate and ignore `aliases`."
+  type        = string
+  default     = ""
+}

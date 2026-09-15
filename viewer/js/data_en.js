@@ -335,7 +335,7 @@ const ARCHITECTURE_DATA_EN = {
         "Ingress Point": "AWS Global Accelerator Anycast ➔ Untrust Floating IP (.100) ➔ Loopback.1",
         "Protocols": "SSL-VPN (TCP 443) and IPSec (UDP 4501)",
         "Client Pools": "10.10.200.0/24 (Region A), 10.20.200.0/24 (Region B) – non-overlapping",
-        "Split Tunneling": "Enterprise 10.0.0.0/8 through tunnel, general internet split-tunneled",
+        "Split Tunneling": "Full tunnel by default (0.0.0.0/0) — ALL client traffic, internet included, egresses via the firewall EIP and is inspected",
         "Authentication": "LDAP profile gated by Active Directory 'vpnusers' group",
         "Gateway Failover": "Native GP agent probe (measures SSL response time)",
         "Config File": "modules/panorama_config/gp.tf"

@@ -312,11 +312,13 @@ module "loadbalancer" {
 }
 
 module "cloudfront" {
-  count              = var.create_app ? 1 : 0
-  source             = "../cloudfront"
-  name_prefix        = var.name_prefix
-  origin_domain_name = module.loadbalancer[0].nlb_dns_name
-  tags               = var.tags
+  count               = var.create_app ? 1 : 0
+  source              = "../cloudfront"
+  name_prefix         = var.name_prefix
+  origin_domain_name  = module.loadbalancer[0].nlb_dns_name
+  aliases             = var.app_aliases
+  acm_certificate_arn = var.app_acm_certificate_arn
+  tags                = var.tags
 }
 
 module "spoke1_app" {

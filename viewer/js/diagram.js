@@ -22,7 +22,7 @@ const I18N_DIAGRAM = {
     regionB_title: "REGION B — eu-west-1 (Dublin)",
     regionB_sub: "Lustrzany stack bezpieczeństwa (10.20/16)",
     regionB_h1: "✓ Standby Anycast Global Accelerator",
-    regionB_h1_sub: "Sub-30s przełączenie portalu GP przy awarii A",
+    regionB_h1_sub: "~30s przełączenie portalu GP przy awarii A",
     regionB_h2: "✓ Replikacja AD Multi-Master",
     regionB_h2_sub: "Kontroler 10.23.0.10 gotowy w 3 sekundy",
     regionB_h3: "✓ Centralny Zarząd z Panoramy A",
@@ -55,7 +55,7 @@ const I18N_DIAGRAM = {
     regionB_title: "REGION B — eu-west-1 (Dublin)",
     regionB_sub: "Mirrored security stack (10.20/16)",
     regionB_h1: "✓ Standby Anycast Global Accelerator",
-    regionB_h1_sub: "Sub-30s GP portal failover upon Region A loss",
+    regionB_h1_sub: "~30s GP portal failover upon Region A loss",
     regionB_h2: "✓ AD Multi-Master Replication",
     regionB_h2_sub: "Replica DC 10.23.0.10 ready in 3 seconds",
     regionB_h3: "✓ Governed from Region A Panorama",
@@ -221,7 +221,7 @@ class ArchitectureDiagram {
       title: "AWS Global Accelerator",
       sub: "Anycast IPs | TCP 443 / UDP 4501",
       icon: "aws-global-accelerator",
-      badge: "Sub-30s Failover",
+      badge: "~30s Failover",
       badgeClass: "active-bg"
     });
 
@@ -475,16 +475,16 @@ class ArchitectureDiagram {
 
     // Spoke 1 (Apache)
     vpcsLayer.insertAdjacentHTML("beforeend", `
-      <rect class="vpc-box spoke-vpc" x="474" y="${lowerTierY}" width="180" height="${lowerTierHeight}" />
+      <rect class="vpc-box spoke-vpc" x="474" y="${lowerTierY}" width="200" height="${lowerTierHeight}" />
       <text class="vpc-title" x="488" y="${lowerTierY + 22}">Spoke 1 (App)</text>
-      <text class="vpc-cidr" text-anchor="end" x="640" y="${lowerTierY + 22}">10.12/16</text>
+      <text class="vpc-cidr" text-anchor="end" x="660" y="${lowerTierY + 22}">10.12/16</text>
     `);
 
     nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
       id: "apache-a",
       x: 488,
       y: lowerTierY + 36,
-      w: 152,
+      w: 172,
       h: 150,
       title: "Apache Web App",
       sub: "10.12.0.10<br/>Port 80 HTTP",
@@ -495,16 +495,16 @@ class ArchitectureDiagram {
 
     // Spoke 2 (Active Directory)
     vpcsLayer.insertAdjacentHTML("beforeend", `
-      <rect class="vpc-box spoke-vpc" x="668" y="${lowerTierY}" width="180" height="${lowerTierHeight}" />
-      <text class="vpc-title" x="682" y="${lowerTierY + 22}">Spoke 2 (AD DS)</text>
-      <text class="vpc-cidr" text-anchor="end" x="834" y="${lowerTierY + 22}">10.13/16</text>
+      <rect class="vpc-box spoke-vpc" x="694" y="${lowerTierY}" width="200" height="${lowerTierHeight}" />
+      <text class="vpc-title" x="708" y="${lowerTierY + 22}">Spoke 2 (AD DS)</text>
+      <text class="vpc-cidr" text-anchor="end" x="880" y="${lowerTierY + 22}">10.13/16</text>
     `);
 
     nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
       id: "dc-a",
-      x: 682,
+      x: 708,
       y: lowerTierY + 36,
-      w: 152,
+      w: 172,
       h: 150,
       title: isEn ? "Windows DC (Primary)" : "Windows DC (Podstawowy)",
       sub: "panw.labs<br/>10.13.0.10",
@@ -621,7 +621,7 @@ class ArchitectureDiagram {
       y: tgwY,
       w: 470,
       h: 66,
-      title: "Transit Gateway Region B (ASN 64513)",
+      title: "Transit Gateway Region B (ASN 64512)",
       sub: isEn ? "Peering Accepter to Region A TGW (Appliance Mode Enabled)" : "Akceptor Peer-ingu do TGW A (Appliance Mode Włączony)",
       icon: "aws-transit-gateway",
       badge: "DR Hub",
@@ -760,48 +760,84 @@ class ArchitectureDiagram {
       cy: cfg.y + cfg.h / 2
     };
 
-    // --- Title / badge fitting -------------------------------------------
-    // The title starts at x=54 absolute (inner group is translated by 12) and
-    // the badge used to be a FIXED 80px block pinned to the right edge. On a
-    // narrow card that leaves (w - 152)px for the title — literally 0px on the
-    // 152px-wide spoke nodes — so long titles ran under the badge and out of
-    // the card. Size the badge to its text and, when the title still will not
-    // fit, either drop the badge to its own row (tall cards have the space) or
-    // ellipsize. Full text is always kept in a <title> tooltip.
-    const TITLE_CH = 6.2;   // ~px per char at 11px/700
-    const BADGE_CH = 5.6;   // ~px per char at 8.5px/700
+    // --- Fitting title, subtitle and badge inside the card -----------------
+    // Three real overflow bugs this replaces:
+    //   * the badge was a fixed 80px block pinned right while the title started
+    //     at a fixed offset, leaving w-152 px for the title — 0 px on the 152px
+    //     spoke nodes, so titles ran under the badge and out of the card;
+    //   * subtitles sat at y=42 absolute inside cards only 42px tall, so the
+    //     second line rendered ON the bottom border ("loopback.1 | GP Portal");
+    //   * long subtitles simply ran past the right edge ("... Panorama A").
+    // Rather than truncate first, SHRINK to fit: a slightly smaller label is far
+    // more useful than an ellipsis. Only clip when even the floor size overflows.
+    const CH_TITLE = 0.56;  // width per char, as a fraction of font-size, 700 weight
+    const CH_MONO  = 0.60;  // monospace subtitle
     const esc = (v) => String(v == null ? "" : v);
+
     const titleText = esc(cfg.title);
     const badgeText = esc(cfg.badge);
+    // Upstream encodes multi-line subtitles with <br/>, which SVG does not
+    // honour — the extra lines silently vanished. Split and emit real tspans.
+    const subLines = esc(cfg.sub).split(/<br\s*\/?>/i).filter(Boolean);
 
-    const badgeW = badgeText ? Math.max(46, Math.round(badgeText.length * BADGE_CH) + 16) : 0;
-    const titleNeeds = titleText.length * TITLE_CH;
-    const inlineRoom = cfg.w - 54 - (badgeW ? badgeW + 18 : 10);
+    const badgeFont = 8.5;
+    const badgeW = badgeText ? Math.max(46, Math.round(badgeText.length * badgeFont * 0.62) + 16) : 0;
 
-    // Tall cards can host the badge on a bottom row, freeing the whole width.
-    const stackBadge = Boolean(badgeText) && titleNeeds > inlineRoom && cfg.h >= 90;
-    const titleRoom  = stackBadge ? cfg.w - 64 : inlineRoom;
+    // Park the badge on a bottom row whenever it would squeeze the title, and
+    // the card is tall enough to host a second row (>=60px). This is what saves
+    // the narrow cards: on a 200px card a 13-char badge eats 85px of width, so
+    // inline there is no room for the title at any legible size, while stacked
+    // the title gets the full 136px and renders at full 11px.
+    const stackBadge = Boolean(badgeText) && cfg.h >= 60 &&
+      titleText.length * 11 * CH_TITLE > cfg.w - 54 - badgeW - 18;
 
-    let shownTitle = titleText;
-    if (titleNeeds > titleRoom) {
-      const keep = Math.max(3, Math.floor(titleRoom / TITLE_CH) - 1);
-      if (keep < titleText.length) shownTitle = titleText.slice(0, keep).trimEnd() + "\u2026";
-    }
+    const titleRoom = (stackBadge ? cfg.w - 64 : cfg.w - 54 - (badgeW ? badgeW + 18 : 12));
+    const subRoom   = cfg.w - 54 - 12;
+
+    const fit = (text, room, max, min, ratio) => {
+      if (!text) return { size: max, text: "" };
+      let size = max;
+      while (size > min && text.length * size * ratio > room) size -= 0.5;
+      if (text.length * size * ratio > room) {
+        const keep = Math.max(3, Math.floor(room / (size * ratio)) - 1);
+        return { size, text: text.slice(0, keep).trimEnd() + "\u2026" };
+      }
+      return { size, text };
+    };
+
+    const t  = fit(titleText, titleRoom, 11, 7.5, CH_TITLE);
+    const ss = subLines.map(l => fit(l, subRoom, 9.5, 7.5, CH_MONO));
+    const subSize = ss.length ? Math.min(...ss.map(x => x.size)) : 9.5;
+
+    // Vertical layout. The inner group is translated by (12,10), so a baseline
+    // of Y here sits at Y+10 in card space; the card must fit the last baseline
+    // plus a descender. Short cards get a tighter rhythm instead of overflowing.
+    // A stacked badge occupies the bottom 26px, so a short card must also pull
+    // its text rows up or the subtitle lands underneath the badge.
+    const tight     = cfg.h < 56 || (stackBadge && cfg.h < 90);
+    const titleBase = tight ? 12 : 16;
+    const lineGap   = tight ? 12 : 15;
+
+    const subMarkup = ss.map((x, i) =>
+      `<text class="node-subtitle" font-size="${subSize}" x="42" y="${titleBase + lineGap * (i + 1)}">${x.text}</text>`
+    ).join("");
 
     const badgeMarkup = !badgeText ? "" : stackBadge
       ? `<rect class="node-badge ${cfg.badgeClass || ''}" x="12" y="${cfg.h - 26}" width="${badgeW}" height="18" rx="4" />
-         <text fill="#FFFFFF" font-size="8.5" font-weight="700" x="${12 + badgeW / 2}" y="${cfg.h - 13}" text-anchor="middle">${badgeText}</text>`
+         <text fill="#FFFFFF" font-size="${badgeFont}" font-weight="700" x="${12 + badgeW / 2}" y="${cfg.h - 13}" text-anchor="middle">${badgeText}</text>`
       : `<rect class="node-badge ${cfg.badgeClass || ''}" x="${cfg.w - badgeW - 10}" y="8" width="${badgeW}" height="18" rx="4" />
-         <text fill="#FFFFFF" font-size="8.5" font-weight="700" x="${cfg.w - badgeW / 2 - 10}" y="20" text-anchor="middle">${badgeText}</text>`;
+         <text fill="#FFFFFF" font-size="${badgeFont}" font-weight="700" x="${cfg.w - badgeW / 2 - 10}" y="20" text-anchor="middle">${badgeText}</text>`;
+
+    const snippetY = titleBase + lineGap * (ss.length + 1);
 
     return `
       <g id="node-${cfg.id}" class="arch-node" transform="translate(${cfg.x}, ${cfg.y})" onclick="window.app.selectComponent('${cfg.id}')">
         <rect class="node-card ${cardClass}" width="${cfg.w}" height="${cfg.h}" />
         <g transform="translate(12, 10)">
           <g class="node-icon">${iconSvg}</g>
-          <text class="node-title" x="42" y="16">${shownTitle}<title>${titleText}</title></text>
-          <text class="node-subtitle" x="42" y="32">${cfg.sub}</text>
-          ${cfg.detailsSnippet ? `<text fill="#64748B" font-size="9" font-family="var(--font-mono)" x="42" y="48">${cfg.detailsSnippet}</text>` : ''}
+          <text class="node-title" font-size="${t.size}" x="42" y="${titleBase}">${t.text}<title>${titleText}</title></text>
+          ${subMarkup}
+          ${cfg.detailsSnippet ? `<text fill="#64748B" font-size="9" font-family="var(--font-mono)" x="42" y="${snippetY}">${cfg.detailsSnippet}</text>` : ''}
         </g>
         ${badgeMarkup}
       </g>

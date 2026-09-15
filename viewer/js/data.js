@@ -335,7 +335,7 @@ const ARCHITECTURE_DATA = {
         "Punkt wejścia": "AWS Global Accelerator Anycast ➔ Untrust Floating IP (.100) ➔ Loopback.1",
         "Protokoły": "SSL-VPN (TCP 443) oraz IPSec (UDP 4501)",
         "Pula adresowa klientów": "10.10.200.0/24 (Region A), 10.20.200.0/24 (Region B) – brak nakładania",
-        "Split Tunneling": "Ruch do podsieci korporacyjnych 10.0.0.0/8 przez tunel, internet split-tunneled",
+        "Split Tunneling": "Domyślnie pełny tunel (0.0.0.0/0) — CAŁY ruch klienta, łącznie z internetem, wychodzi przez EIP firewalla i jest inspekowany",
         "Uwierzytelnianie": "Profil LDAP ze sprawdzaniem grupy AD 'vpnusers' (group-gated access)",
         "Failover Bramy": "Natywny mechanizm agenta GP (wybór najlepszej bramy wg SSL response time)",
         "Plik konfiguracyjny": "modules/panorama_config/gp.tf"

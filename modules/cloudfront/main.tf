@@ -19,6 +19,10 @@ resource "aws_cloudfront_distribution" "app" {
   is_ipv6_enabled = true
   tags            = merge(var.tags, { Name = "${var.name_prefix}-app-cdn" })
 
+  # Only advertise aliases once a matching cert exists; CloudFront rejects the
+  # distribution outright if an alias has no certificate covering it.
+  aliases = var.acm_certificate_arn == "" ? [] : var.aliases
+
   origin {
     origin_id   = "app-nlb"
     domain_name = var.origin_domain_name
@@ -57,6 +61,12 @@ resource "aws_cloudfront_distribution" "app" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true
+    # Default *.cloudfront.net cert until a real FQDN + ACM cert is supplied.
+    cloudfront_default_certificate = var.acm_certificate_arn == ""
+    acm_certificate_arn            = var.acm_certificate_arn == "" ? null : var.acm_certificate_arn
+    # sni-only is the free option; "vip" bills per month and is only needed for
+    # clients too old to send SNI, which none of this stack's users are.
+    ssl_support_method       = var.acm_certificate_arn == "" ? null : "sni-only"
+    minimum_protocol_version = var.acm_certificate_arn == "" ? null : "TLSv1.2_2021"
   }
 }

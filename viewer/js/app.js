@@ -44,7 +44,7 @@ const UI_TRANSLATIONS = {
         <h4 style="color:#fff; font-size:13px; margin:14px 0 8px 0;">Filary Projektu:</h4>
         <ul style="margin-left:18px; display:flex; flex-direction:column; gap:6px; font-size:12px;">
           <li><strong>Active/Passive VM-Series:</strong> Failover z wtyczką AWS HA (preemption wyłączone).</li>
-          <li><strong>AWS Global Accelerator:</strong> Sub-30s failover Anycast całego regionu.</li>
+          <li><strong>AWS Global Accelerator:</strong> Failover Anycast całego regionu (~30s: health-check 10s x 3).</li>
           <li><strong>TGW Appliance Mode:</strong> Wymuszenie symetrii sesji międzystrefowych.</li>
           <li><strong>Pojedyncza Panorama:</strong> Zarządzanie przez prywatny TGW Peering.</li>
           <li><strong>Zero-Bastion:</strong> Pełny dostęp przez SSM Session Manager.</li>
@@ -99,7 +99,7 @@ const UI_TRANSLATIONS = {
         <h4 style="color:#fff; font-size:13px; margin:14px 0 8px 0;">Architecture Pillars:</h4>
         <ul style="margin-left:18px; display:flex; flex-direction:column; gap:6px; font-size:12px;">
           <li><strong>Active/Passive VM-Series:</strong> Automated failover via AWS HA Plugin (preemption disabled).</li>
-          <li><strong>AWS Global Accelerator:</strong> Sub-30s Anycast regional failover bypassing DNS TTL.</li>
+          <li><strong>AWS Global Accelerator:</strong> Anycast regional failover bypassing DNS TTL (~30s: 10s health check x 3 threshold).</li>
           <li><strong>TGW Appliance Mode:</strong> Stateful flow symmetry across Multi-AZ attachments.</li>
           <li><strong>Single Panorama:</strong> Centralized governance over encrypted private TGW Peering.</li>
           <li><strong>Zero-Bastion:</strong> Direct port forwarding via AWS SSM Session Manager.</li>

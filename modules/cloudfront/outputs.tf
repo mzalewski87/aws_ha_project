@@ -16,3 +16,8 @@ output "distribution_arn" {
   description = "CloudFront distribution ARN."
   value       = aws_cloudfront_distribution.app.arn
 }
+
+output "distribution_hosted_zone_id" {
+  description = "Route53 hosted-zone ID of the CloudFront distribution, for alias records."
+  value       = aws_cloudfront_distribution.app.hosted_zone_id
+}

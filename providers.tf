@@ -74,6 +74,16 @@ provider "aws" {
   default_tags { tags = var.common_tags }
 }
 
+# CloudFront only accepts viewer certificates from ACM in us-east-1, no matter
+# where the distribution's origin or its viewers are. A cert issued in any other
+# region simply cannot be attached, so the app's custom-domain cert is created
+# against this alias.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+  default_tags { tags = var.common_tags }
+}
+
 # ACME (Let's Encrypt) for the optional custom-domain cert (DNS-01 via Route53).
 # Staging endpoint avoids the strict prod rate limits while testing; flip
 # custom_domain_letsencrypt_staging = false for a browser-trusted cert.
