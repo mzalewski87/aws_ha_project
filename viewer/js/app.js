@@ -548,10 +548,14 @@ class AppController {
 
 // Global bootstrap on load
 window.addEventListener("DOMContentLoaded", () => {
-  // Read optional lang query param ?lang=en or detect path
+  // ENGLISH-ONLY BUILD. Upstream picked the language from the FILE NAME
+  // (pathname.endsWith("index_en.html") ? "en" : "pl"). This deployment serves
+  // the English page as index.html — the Pages root is "/", which does not end
+  // in "index_en.html" — so that test silently fell back to Polish. Default to
+  // English explicitly and keep honouring ?lang= for anyone who wants the
+  // Polish data set that still ships in js/data.js.
   const urlParams = new URLSearchParams(window.location.search);
-  const isEnFile = window.location.pathname.endsWith("index_en.html");
-  const initialLang = urlParams.get("lang") || (isEnFile ? "en" : "pl");
+  const initialLang = urlParams.get("lang") || "en";
 
   window.app = new AppController(initialLang);
 });
