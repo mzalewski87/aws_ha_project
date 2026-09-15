@@ -850,6 +850,38 @@ curl -sk "https://localhost:44300/api/?type=op&cmd=<show><devices><connected></c
 - App: browse the CloudFront domain → CloudFront → app NLB → FW DNAT → Apache.
 - GP: connect the GlobalProtect agent to the portal FQDN.
 
+**Check a connected GP tunnel is actually using IPSec, not SSL.** Connect a
+client, then on the **active** firewall of the region it landed on:
+
+```
+show global-protect-gateway current-user
+```
+
+Read three fields:
+
+| Field | Want | Meaning |
+|-------|------|---------|
+| `ESP` | `exist` | the IPSec data path is up |
+| `SSL` | `none` | no TLS fallback channel in use |
+| `Private IP` | from **that region's** pool | per-region `$gp_ip_pool` resolved correctly |
+
+`ESP: removed / SSL: exist` means the tunnel silently degraded to SSL — it
+works, but slower and far more CPU-hungry on the firewall. Almost always UDP
+4501 is being dropped; confirm with:
+
+```
+show log traffic direction equal backward query equal "(port.dst eq 4501)"
+```
+
+A `deny-all … 4501 … policy-deny` line is the tell. The inbound rule must list
+the custom `gp-ipsec-udp4501` service alongside the TCP ones (see
+`modules/panorama_config/main.tf`) — PAN-OS ships no built-in service for that
+port, so a TCP-only rule looks complete but is not.
+
+> **IPSec is negotiated at tunnel setup.** After fixing the rule, existing
+> sessions keep running over SSL until the client disconnects and reconnects —
+> don't judge the fix by a session that predates it.
+
 ---
 
 ## Testing traffic flows
