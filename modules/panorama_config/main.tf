@@ -520,9 +520,11 @@ locals {
       source_addresses      = ["any"]
       destination_addresses = [for ip in var.gp_local_ips : "${ip}/32"] # each region's floating IP
       applications          = ["any"]
-      services              = ["service-https", "service-http"]
-      action                = "allow"
-      log_end               = true
+      # TCP 443/80 for the portal + gateway SSL, UDP 4501 for IPSec. Omit the
+      # UDP service and tunnels still come up — over SSL, silently.
+      services = ["service-https", "service-http", panos_service.gp_ipsec.name]
+      action   = "allow"
+      log_end  = true
     },
     {
       name                  = "deny-all"
@@ -536,6 +538,27 @@ locals {
       log_end               = true
     },
   ]
+}
+
+###############################################################################
+# Custom service: GlobalProtect IPSec data port
+###############################################################################
+# PAN-OS ships no built-in service for UDP 4501, and the GP inbound rule below
+# can only reference named services. Without this the rule is TCP-only, the
+# client's IPSec (ESP over UDP 4501) falls through to deny-all, and every tunnel
+# silently degrades to SSL — slower and far more CPU-hungry on the firewall.
+# The symptom is easy to miss: the VPN works, `show global-protect-gateway
+# current-user` just reports "ESP: removed / SSL: exist". Live-diagnosed
+# 2026-09-15 (traffic log: deny-all, dst 4501, policy-deny).
+resource "panos_service" "gp_ipsec" {
+  location    = local.dg_loc
+  name        = "gp-ipsec-udp4501"
+  description = "GlobalProtect IPSec (ESP over UDP) data port"
+  protocol = {
+    udp = {
+      destination_port = "4501"
+    }
+  }
 }
 
 resource "panos_security_policy" "rules" {
