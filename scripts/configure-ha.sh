@@ -41,14 +41,31 @@ KEY_FILE="${KEY_FILE:?KEY_FILE (SSH private key path) required}"
 HA2_NETMASK="${HA2_NETMASK:-255.255.255.0}"
 GROUP_ID="${GROUP_ID:-1}"
 FW_USER="${FW_USER:-admin}"
-# Local forward port is derived from the firewall's mgmt IP last octet so that
-# running this back-to-back for fw1 then fw2 uses DIFFERENT ports. With a fixed
-# port, a not-yet-torn-down SSM tunnel from the first run stays bound and the
-# second run's SSH silently reaches the FIRST firewall — which pushed fw2's
-# config (peer-ip = its own IP) onto fw1 and left fw2 untouched ("HA not
-# enabled"). Unique port per FW avoids that collision entirely.
-LP="${SSH_LOCAL_PORT:-23${FW_IP##*.}}"
+# Local forward port is derived from the firewall's mgmt IP so that running this
+# back-to-back for fw1 then fw2 uses DIFFERENT ports. With a shared port, a
+# not-yet-torn-down SSM tunnel from the first run stays bound and the second
+# run's SSH silently reaches the FIRST firewall — which pushed fw2's config
+# (peer-ip = its own IP) onto fw1 and left fw2 untouched ("HA not enabled").
+#
+# The port must be derived from the WHOLE address, not just the last octet: in
+# a multi-region deploy the regions mirror each other's host numbering (Region A
+# fw1 10.10.0.11 vs Region B fw1 10.20.0.11) and even share the mgmt subnet's
+# third octet, so any per-octet scheme collides across regions and reintroduces
+# exactly the bug above. A checksum of the full IP is stable per firewall
+# (re-runs reuse the same port) and unique across any addressing plan.
+_ip_hash="$(printf '%s' "${FW_IP}" | cksum | cut -d' ' -f1)"
+LP="${SSH_LOCAL_PORT:-$(( 20000 + _ip_hash % 20000 ))}"
 export AWS_REGION="${AWS_REGION:-eu-central-1}"
+
+# Belt and braces: if something is already listening on the chosen local port,
+# a tunnel from an earlier run (or another tool) would hijack this session to
+# the wrong firewall. Fail loudly instead of silently misconfiguring HA.
+if command -v nc >/dev/null 2>&1 && nc -z -G 2 127.0.0.1 "${LP}" >/dev/null 2>&1; then
+  echo "[configure-ha] ERROR: local port ${LP} is already in use — a stale SSM tunnel" >&2
+  echo "        would send this config to the WRONG firewall. Close it (or set" >&2
+  echo "        SSH_LOCAL_PORT to a free port) and re-run." >&2
+  exit 1
+fi
 
 KEY_FILE="${KEY_FILE/#\~/$HOME}"
 if [ ! -f "${KEY_FILE}" ]; then
