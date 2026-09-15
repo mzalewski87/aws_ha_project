@@ -981,7 +981,15 @@ request high-availability sync-to-remote running-config
 ### Testing failover
 
 Use the on/off helper `scripts/failover-test.sh`, which drives both scenarios
-via the AWS API only (EC2 stop/start + describe — no SSH, no tunnel):
+via the AWS API only (EC2 stop/start + describe — no SSH, no tunnel). To measure
+what a **real VPN client** experiences while you do, run
+`scripts/gp-failover-monitor.ps1` on a connected Windows client first — it polls
+the tunnel, the egress IP, the internet and internal-only resources every few
+seconds and writes a timestamped CSV plus a summary naming the exact moment the
+path switched regions. Fill in `-EipRegionA` / `-EipRegionB` from
+`terraform output fw_public_eips` so it can label which region is serving you.
+See [Measured failover behaviour](#measured-failover-behaviour) for the numbers
+one such run produced.
 
 ```bash
 scripts/failover-test.sh status a          # show HA state of the Region A pair
@@ -1004,6 +1012,91 @@ Expected results (after `configure-ha.sh` — see the REQUIRED-step note above):
   Accelerator drops the Region A endpoint and serves the portal via Region B; GP
   **AD auth** through the anycast FQDN succeeds in a few seconds (LDAP fails over
   to the Region B DC — see the `gp_ldap_bind_timelimit` note under Phase R2).
+
+### Measured failover behaviour
+
+Numbers below are from a **real client-side measurement** on a live two-region
+deployment (2026-09-15): a Windows GlobalProtect agent connected over IPSec,
+sampled every 3 s by `scripts/gp-failover-monitor.ps1`, 294 samples over ~26
+minutes. IPs are anonymised; percentages and durations are as measured. Treat
+them as one honest data point, not a guarantee — they depend on client OS, agent
+version, RTT and how the fault is injected.
+
+**Why the egress IP is the signal to watch.** Each region SNATs client traffic
+to its own firewall Elastic IP, so the client's public IP *names the region
+serving it*. A change of egress IP is the failover, observed from outside.
+
+#### Scenario 1 — single firewall fails (in-region HA)
+
+Injected with `request high-availability state suspend` on the active unit.
+
+| Metric | Expected | Measured |
+|---|---|---|
+| Egress IP | **unchanged** — the EIP moves to the peer *within* the region | unchanged ✅ |
+| ICMP to internet | brief or no loss | **0 samples lost (100 %)** |
+| Tunnel adapter | stays up | **never dropped** |
+| Internal DC reachability | brief or no loss | **0 samples lost** |
+| HTTPS / portal TCP | ≤ a few seconds | **1 sample each (~3 s)** |
+| AWS resources moved | floating IP, EIP, TGW inspection route | all three, **~40 s**, no API calls |
+
+The defining property: **the public IP does not change**, because the address
+moves between two firewalls inside one region. A client barely notices.
+
+#### Scenario 2 — whole region fails
+
+Injected by stopping both Region A firewalls (`failover-test.sh region a down`).
+
+| Metric | Expected | Measured |
+|---|---|---|
+| Global Accelerator health | Region A → UNHEALTHY, B stays HEALTHY | as expected ✅ |
+| Portal via anycast FQDN | stays reachable | `Success` throughout |
+| Client gateway | moves to Region B (GP-native) | moved ✅ |
+| Client pool address | Region **B** pool | `10.20.200.x` ✅ (per-region `$gp_ip_pool` working) |
+| Transport after failover | IPSec | `ESP: exist / SSL: none` ✅ |
+| Fault → first user-visible impact | — | **~4 min** (see caveat) |
+| First impact → fully restored | — | **~80 s** |
+| ICMP to internet, over the stage | — | 2 samples lost (**98.4 %** available) |
+| Tunnel adapter down | — | ~6–12 s |
+| Internal DC unreachable | — | ~60 s |
+
+> **Caveat on the ~4 minutes.** That gap is dominated by how long the EC2
+> instances took to actually stop, not by failover logic — the firewalls kept
+> forwarding while shutting down. A hard failure (power loss, AZ failure) would
+> be detected far sooner. Measure the *recovery* number (~80 s), not this one.
+
+**Latency cost of running from the far region** (same client, same targets):
+
+| Path | Region A (home) | Region B (failed over) |
+|---|---|---|
+| Internet RTT (median) | 37 ms | 56 ms (+19 ms) |
+| Region A domain controller RTT | 38 ms | 78 ms (+40 ms — cross-region hop) |
+
+#### Two things the measurement exposed — read these
+
+1. **Traffic briefly leaves OUTSIDE the tunnel (fail-open).** For ~6 s while the
+   GP adapter was down mid-failover, internet still worked and the egress IP was
+   the **client's own public IP** — i.e. traffic bypassed the VPN entirely. In a
+   full-tunnel deployment that is a real, if short, exposure: during every
+   failover, traffic you believe is inspected is not.
+   GlobalProtect does not fail closed by default. If that matters, set the
+   portal agent config to block traffic while the tunnel is down
+   (*Network → GlobalProtect → Portals → Agent → App → "Block network traffic
+   if GlobalProtect is disconnected"*, and consider Enforcer/Connect-Before-Logon).
+   This repo does **not** enable it — it would lock a lab user out of their own
+   machine during an outage — so decide deliberately.
+
+2. **Cross-region client reachability is asymmetric.** While served by Region A
+   the client could **not** reach the Region B domain controller; while served
+   by Region B it **could** reach the Region A one. This does not affect VPN
+   login — the *firewall* performs the LDAP bind, not the client, and both
+   firewalls reach both DCs — but do not assume a GP client can reach every
+   spoke in the peer region.
+
+Also expected, so it does not read as a fault: **resources that exist only in
+the failed region stay down**. The Spoke1 app lives in Region A alone, so it was
+unreachable for the whole outage and only returned after the firewalls finished
+booting (~5–8 min after restart). Region-outage survival covers the portal, the
+gateway and AD authentication — not single-region workloads.
 
 Or do it by hand to see the moving parts:
 
