@@ -180,6 +180,12 @@ variable "gp_portal_name" {
   default     = "gp-portal"
 }
 
+variable "gp_ip_pool_variable_name" {
+  description = "Panorama TEMPLATE VARIABLE holding the GP client IP pool. The pool MUST differ per region (a shared pool makes return traffic to a client address ambiguous across regions), and the GP gateway lives in the TEMPLATE, so a template variable resolves it per device. Overridden by serial in phase2 (set-untrust-overrides.sh)."
+  type        = string
+  default     = "$gp_ip_pool"
+}
+
 variable "gp_ip_pool" {
   description = "GlobalProtect client IP pool(s) for Region A (non-overlapping across regions)."
   type        = list(string)

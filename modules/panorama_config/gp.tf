@@ -266,8 +266,15 @@ resource "panos_globalprotect_gateway" "gw" {
   }]
 
   remote_user_tunnel_configs = [{
-    name       = "gp-tunnel-config"
-    ip_pool    = var.gp_ip_pool
+    name = "gp-tunnel-config"
+    # Per-region via a TEMPLATE VARIABLE, not a literal list. Both regions share
+    # one template, so a literal pool hands out the SAME client addresses in
+    # every region — a client on Region B gets a Region A address, and return
+    # traffic from a spoke to that address routes to the wrong region's firewall
+    # (which has no such client) and blackholes. The GP gateway lives in the
+    # template, so $gp_ip_pool resolves per device; phase2 sets the per-serial
+    # override (Region A 10.10.200.0/24, Region B 10.20.200.0/24).
+    ip_pool    = [var.gp_ip_pool_variable_name]
     dns_server = var.gp_dns_servers
     split_tunneling = {
       access_route = var.gp_split_tunnel_routes

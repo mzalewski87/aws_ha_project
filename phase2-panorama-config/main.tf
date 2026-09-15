@@ -176,6 +176,7 @@ resource "null_resource" "untrust_ip_overrides" {
     floatings = jsonencode(var.fw_untrust_floating_ips)
     ugws      = jsonencode(var.fw_untrust_gateways)
     tgws      = jsonencode(var.fw_trust_gateways)
+    gppools   = jsonencode(var.fw_gp_ip_pools)
   }
 
   provisioner "local-exec" {
@@ -231,6 +232,22 @@ resource "null_resource" "untrust_ip_overrides" {
       TEMPLATE_STACK    = var.template_stack_name
       VAR_NAME          = "$fw_trust_gw"
       FW_OVERRIDES      = jsonencode({ for k, s in var.fw_serials : s => var.fw_trust_gateways[k] })
+    }
+  }
+
+  # GP client pool, per region. Without this every region hands out the same
+  # addresses (see modules/panorama_config/gp.tf ip_pool).
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = "${path.root}/../scripts/set-untrust-overrides.sh"
+    environment = {
+      PANORAMA_HOST     = var.panorama_hostname
+      PANORAMA_PORT     = tostring(var.panorama_port)
+      PANORAMA_USER     = var.panorama_username
+      PANORAMA_PASSWORD = var.panorama_password
+      TEMPLATE_STACK    = var.template_stack_name
+      VAR_NAME          = "$gp_ip_pool"
+      FW_OVERRIDES      = jsonencode({ for k, s in var.fw_serials : s => var.fw_gp_ip_pools[k] })
     }
   }
 }

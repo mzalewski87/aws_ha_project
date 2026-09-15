@@ -114,6 +114,15 @@ variable "fw_untrust_floating_ips" {
     fw1b = "10.20.10.100/32", fw2b = "10.20.10.100/32"
   }
 }
+variable "fw_gp_ip_pools" {
+  description = "Per-firewall GlobalProtect client IP pool. MUST be non-overlapping across regions: both regions share one template, so a single pool hands out the same client addresses everywhere and return traffic from a spoke routes to the wrong region's firewall. Same within a region, different across regions."
+  type        = map(string)
+  default = {
+    fw1a = "10.10.200.0/24", fw2a = "10.10.200.0/24"
+    fw1b = "10.20.200.0/24", fw2b = "10.20.200.0/24"
+  }
+}
+
 variable "untrust_floating_cidr" {
   description = "Template-level DEFAULT for the floating-IP variable (Region A value). Per-device values come from fw_untrust_floating_ips. MUST be /32."
   type        = string
