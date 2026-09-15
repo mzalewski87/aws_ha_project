@@ -239,6 +239,23 @@ resource "aws_security_group" "dc" {
 }
 
 resource "aws_instance" "dc" {
+  # STATEFUL — this instance IS the Active Directory forest. Its root volume
+  # holds NTDS; replacing it destroys the domain (and orphans any replica DC in
+  # another region, which then replicates a forest that no longer exists).
+  #
+  # data.aws_ami.windows is a `most_recent` lookup, so it silently resolves to a
+  # newer AMI whenever AWS publishes one — which makes `ami` drift and forces
+  # REPLACEMENT on an unrelated `terraform apply`. This really happened on
+  # 2026-09-15: an apply whose only intended change was a Route53 zone wiped the
+  # forest, because a new Windows AMI had been published hours earlier.
+  #
+  # Pin the attribute so only a deliberate action can recycle the DC. To upgrade
+  # the AMI on purpose: demote/back up first, then
+  # `terraform apply -replace=module.region_a.module.spoke2_dc[0].aws_instance.dc`.
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   ami                    = data.aws_ami.windows.id
   instance_type          = var.instance_type
   subnet_id              = var.subnet_id

@@ -86,6 +86,16 @@ resource "aws_network_interface" "fw" {
   security_groups   = [each.value.sg]
   source_dest_check = each.value.dataplane ? false : true
   tags              = merge(var.tags, { Name = "${var.name_prefix}-${each.value.fw}-${each.value.nic_type}" })
+
+  # The untrust ENIs carry the floating IP as a SECONDARY address, and the
+  # PAN-OS AWS HA plugin moves it between the pair on failover
+  # (AssignPrivateIpAddresses). That makes `private_ips` runtime-owned: after a
+  # failover Terraform wants to put the floating IP back on fw1, fighting the
+  # plugin and stranding the address on the passive unit. The primary IP is set
+  # at creation and never changes, so ignoring the list is safe.
+  lifecycle {
+    ignore_changes = [private_ips]
+  }
 }
 
 ###############################################################################
@@ -101,6 +111,19 @@ resource "aws_eip_association" "fw_public" {
   allocation_id        = aws_eip.fw_public.id
   network_interface_id = aws_network_interface.fw["fw1-untrust"].id
   private_ip_address   = local.floating_ip
+
+  # RUNTIME-OWNED BY THE PAN-OS AWS HA PLUGIN. This association only seeds the
+  # initial placement on fw1; on every failover the plugin re-associates the EIP
+  # onto whichever firewall is active. Terraform therefore sees "drift" after a
+  # failover and, on the next apply, REVERTS the EIP to fw1 — moving the public
+  # address onto the PASSIVE unit and taking the portal and the app offline
+  # until the next failover. Observed on 2026-09-15.
+  #
+  # Ignore both attributes so Terraform seeds the association and then leaves
+  # failover to the plugin, which is the component that actually owns it.
+  lifecycle {
+    ignore_changes = [network_interface_id, private_ip_address]
+  }
 }
 
 ###############################################################################
@@ -108,6 +131,20 @@ resource "aws_eip_association" "fw_public" {
 ###############################################################################
 resource "aws_instance" "fw" {
   for_each = toset(local.fw_names)
+
+  # data.aws_ami.vmseries is `most_recent` within the pinned vmseries_version,
+  # so PANW republishing a build of the SAME version silently forces
+  # REPLACEMENT. Recreating a firewall is expensive and not self-healing: it
+  # burns a BYOL activation from the credit pool, and native HA is device-local
+  # config that Panorama does NOT push, so the replacement comes back with
+  # "HA not enabled" and failover stops working until scripts/configure-ha.sh is
+  # re-run for both units (see docs/DEPLOYMENT.md).
+  #
+  # Upgrade deliberately: bump vmseries_version, then `-replace=` one unit at a
+  # time and re-run configure-ha.sh, so the pair is never down together.
+  lifecycle {
+    ignore_changes = [ami]
+  }
 
   ami                  = coalesce(var.vmseries_ami_id, try(data.aws_ami.vmseries[0].id, null))
   instance_type        = var.instance_type

@@ -140,6 +140,40 @@ Per AWS account, complete once before deploying:
 cp terraform.tfvars.example terraform.tfvars   # fill in the REPLACE_ME values
 ```
 
+### Decide these up front — they change the order of later phases
+
+All four default to **off**, and all four are cheaper to decide now than to
+retrofit. Nothing here is required: the stack is fully functional with every
+one of them off.
+
+| Option | Default | Turn it on if… | Cost of deciding late |
+|--------|---------|----------------|------------------------|
+| **Custom domain** (`enable_custom_domain`) | off | you want the portal on your own name (`gp.example.com`) and a **browser-trusted** cert instead of raw IPs + a self-signed cert | an extra two-step apply **plus a manual NS change at your registrar**, then a new cert and a phase2 re-apply — see below |
+| **Region B + Global Accelerator** (`enable_region_b`, `enable_global_accelerator`) | off | you need the portal to survive a whole-region outage | doubles the BYOL activations consumed; Region B is a separate two-step apply |
+| **Region B replica DC** (`region_b_create_dc`) | off | VPN **login** must survive a region outage, not just the portal | must be sequenced after the Region A forest exists |
+| **HTTP→HTTPS portal redirect** (`enable_http_redirect`) | off | you want `http://gp.example.com` to 301 instead of failing | needs Global Accelerator; adds ~1 ALB per region (~$16/mo each) |
+
+> **Why the custom domain is the one to decide first.** Without it the GP portal
+> is reached on the firewall EIPs / Global Accelerator anycast IPs with a
+> **self-signed** certificate — clients show a trust warning, which is fine for
+> a lab. With it you get `gp.<your-domain>` and a Let's Encrypt **wildcard**.
+> The catch is that the flow contains a **human step that gates everything after
+> it**: Route53 assigns the zone's name servers and you cannot choose them, so
+> the parent domain's `NS` records must be updated **after** the zone exists.
+> That is why it is a two-step apply, and why bolting it on at the end costs a
+> full extra round trip. Full walkthrough:
+> [Custom domain](#custom-domain-optional--branded-browser-trusted-portal).
+>
+> Already delegated the subdomain to AWS once before? **Re-verify it** — a
+> delegation can be *lame*: the parent still points at four AWS name servers
+> whose hosted zone has since been deleted, so the name resolves nowhere and
+> the stale `NS` must be replaced anyway. Check the parent authoritatively and
+> then query what it hands back:
+> ```bash
+> dig @<parent-ns> <your-subdomain> NS +norecurse     # what the parent claims
+> dig @<one-of-those-ns> <your-subdomain> SOA         # REFUSED = lame delegation
+> ```
+
 ---
 
 ## Phase 1a — Base networking + Panorama

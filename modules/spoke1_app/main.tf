@@ -61,6 +61,15 @@ resource "aws_security_group" "app" {
 }
 
 resource "aws_instance" "apache" {
+  # data.aws_ami.ubuntu is a `most_recent` lookup, so a newly published Ubuntu
+  # AMI makes `ami` drift and forces REPLACEMENT on an unrelated apply. This app
+  # host is disposable (user-data reinstalls Apache), so the blast radius is
+  # small — but the churn is still surprising and it takes the demo page down
+  # mid-deploy. Recycle it deliberately with `-replace=` when you want a new AMI.
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = var.subnet_id
