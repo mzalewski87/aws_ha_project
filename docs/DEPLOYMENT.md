@@ -559,6 +559,23 @@ best-available gateway and fails over natively across regions.
 > First **uninstall the x64 GP and reboot** (it left a broken driver), then
 > install the ARM64 MSI. macOS/Linux clients are also supported natively.
 
+> ⚠️ **With Global Accelerator on and `enable_http_redirect` OFF, the portal
+> FQDN on port 80 serves the SPOKE APP, not an error.** The accelerator gets a
+> TCP **:80** listener pointing at the same firewall EIPs as :443, and the
+> firewall already DNATs :80 on the floating IP to the Spoke1 Apache host (the
+> CloudFront app path shares that address). So `http://gp.<your-domain>/`
+> returns **HTTP 200 with the demo application** — confusing, and it puts an
+> internal app on the portal's hostname. Verified live 2026-09-15.
+>
+> Pick one:
+> - `enable_http_redirect = true` — GA :80 goes to a redirect ALB that 301s to
+>   HTTPS (what most people expect; ~1 ALB per region, ~$16/mo each), or
+> - drop the GA :80 listener entirely if you do not need the redirect, so port
+>   80 on the portal name simply refuses.
+>
+> GP agents always dial HTTPS, so neither choice affects VPN clients — this is
+> purely about what a browser (or a scanner) sees on port 80.
+
 > **HTTP→HTTPS portal redirect (optional, `enable_http_redirect`).** The GP
 > portal is HTTPS-only and PAN-OS has no built-in :80→:443 redirect for it;
 > Global Accelerator is L4 (TCP/UDP) and cannot issue an HTTP 301. The AWS-native
