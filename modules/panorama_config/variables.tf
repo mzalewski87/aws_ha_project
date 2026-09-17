@@ -66,6 +66,21 @@ variable "virtual_router_name" {
 # IP declared on the interface. The per-device primary is a template variable
 # overridden by serial; the floating IP is shared. See main.tf / gp.tf.
 
+variable "fw_trust_static_ips" {
+  description = "Per-firewall TRUST primary IP in CIDR, keyed by fw name. Only [\"fw1a\"] is used here, as the template-level default; per-serial overrides are pushed by phase2."
+  type        = map(string)
+  default = {
+    fw1a = "10.10.20.11/24", fw2a = "10.10.20.12/24"
+    fw1b = "10.20.20.11/24", fw2b = "10.20.20.12/24"
+  }
+}
+
+variable "trust_ip_variable_name" {
+  description = "Panorama template-variable name for the per-device TRUST primary IP. Static, not DHCP: an AWS ENI's address is fixed for the life of the ENI, so DHCP adds nothing and introduces a real failure mode — see the trust interface comment in main.tf."
+  type        = string
+  default     = "$fw_trust_ip"
+}
+
 variable "untrust_ip_variable_name" {
   description = "Panorama template-variable name for the per-device untrust primary IP (referenced by the untrust interface)."
   type        = string

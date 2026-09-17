@@ -98,6 +98,15 @@ variable "app_private_ip" {
 }
 
 # --- Untrust static addressing (required for GlobalProtect binding) ----------
+variable "fw_trust_static_ips" {
+  description = "Per-firewall TRUST primary IP in CIDR, keyed by fw name (fw1a/fw2a Region A, fw1b/fw2b Region B). Static instead of DHCP — an AWS ENI address never changes, and the PAN-OS DHCP client has been observed failing to re-acquire after a stop/start, silently breaking every NAT rule that translates to this interface."
+  type        = map(string)
+  default = {
+    fw1a = "10.10.20.11/24", fw2a = "10.10.20.12/24"
+    fw1b = "10.20.20.11/24", fw2b = "10.20.20.12/24"
+  }
+}
+
 variable "fw_untrust_static_ips" {
   description = "Per-firewall untrust PRIMARY IP in CIDR, keyed by fw name (fw1a/fw2a Region A, fw1b/fw2b Region B). Replaces DHCP so GP local_address can bind; matches root fw_host_offsets."
   type        = map(string)

@@ -168,6 +168,14 @@ resource "panos_loopback_interface" "gp" {
 #     set each firewall's real primary. var.fw_serials is empty until the
 #     firewalls are registered, so these are created in Phase GP once serials
 #     are known (see docs/DEPLOYMENT.md).
+# Template-level default for the per-device TRUST primary IP; real per-serial
+# values are pushed by phase2 (set-untrust-overrides.sh), same as untrust.
+resource "panos_template_variable" "trust_ip_default" {
+  location = local.tpl_loc
+  name     = var.trust_ip_variable_name
+  type     = { ip_netmask = var.fw_trust_static_ips["fw1a"] }
+}
+
 resource "panos_template_variable" "untrust_ip_default" {
   location = local.tpl_loc
   name     = var.untrust_ip_variable_name
@@ -204,16 +212,29 @@ resource "panos_template_variable" "untrust_floating_default" {
 # -> scripts/set-untrust-overrides.sh), keyed by serial. The template-level
 # default above keeps the template valid before serials are known.
 
+# trust is STATIC, not DHCP — deliberately, and for the same reason untrust is.
+#
+# An AWS ENI's private address is fixed for the life of the ENI, so DHCP buys
+# nothing here and costs a real outage mode: after an EC2 stop/start of the pair
+# (a region-outage test), the PAN-OS DHCP client on this interface came back
+# with the link `up` but NO lease — "Interface IP address (dynamic): 0.0.0.0/0"
+# — and `request dhcp client renew` did not recover it. Everything that
+# source-NATs *to this interface* then silently dies: inbound-app-dnat (so the
+# app NLB health checks fail and the whole app path is down) and
+# gp-internal-snat (so VPN clients cannot reach internal resources), while
+# spoke egress loses its return path and sessions age out as `incomplete`.
+# Inbound GP keeps working throughout, because portal/gateway bind loopback.1
+# and never touch this interface — which makes the fault very hard to read.
+# Live-hit 2026-09-17. A static address cannot get into that state.
 resource "panos_ethernet_interface" "trust" {
   location = local.tpl_loc
   name     = "ethernet1/2"
   comment  = "trust (spoke-facing / TGW)"
 
   layer3 = {
-    dhcp_client = {
-      enable               = true
-      create_default_route = false
-    }
+    ips = [
+      { name = var.trust_ip_variable_name }, # per-device via template variable
+    ]
   }
 }
 

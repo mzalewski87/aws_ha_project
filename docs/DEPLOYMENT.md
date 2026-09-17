@@ -1316,6 +1316,30 @@ terraform destroy
   Panorama↔FW-mgmt pattern). If the bind still times out, use the **AWS
   Reachability Analyzer** (see the `Connected: no` entry above) between a
   security-VPC mgmt-subnet ENI and the DC's ENI on TCP/389 to confirm the path.
+- **Everything behind the firewall breaks at once — app NLB targets go
+  unhealthy, spokes lose internet, SSM agents in the spokes stop registering —
+  while the GP portal and gateway on the SAME firewall still answer fine** →
+  check whether the **trust interface lost its DHCP lease**:
+  ```
+  show interface ethernet1/2        # "Interface IP address (dynamic): 0.0.0.0/0" = no lease
+  show running nat-policy           # look for "src: ethernet1/2 (unavailable)"
+  ```
+  `(unavailable)` in a NAT rule's `translate-to` is the giveaway. Seen after an
+  EC2 stop/start of the firewall pair (a region-outage test): the link comes
+  back `up` but the PAN-OS DHCP client never re-acquires, so ethernet1/2 has no
+  address. Any rule that source-NATs *to that interface* silently stops working
+  — which is `inbound-app-dnat` (so NLB health checks and the whole app path
+  die) and `gp-internal-snat` (so VPN clients cannot reach internal resources).
+  Return traffic for spoke egress also fails, because the firewall cannot
+  resolve its trust next-hop, and sessions just age out as `incomplete`.
+  The confusing part: inbound GP keeps working, because the portal/gateway bind
+  `loopback.1` and never touch the trust interface. Fix:
+  ```
+  request dhcp client renew ethernet1/2
+  ```
+  and re-check. If the lease does not come back, reboot the firewall. Verify
+  with `show running nat-policy` — the rules must show a real IP, not
+  `(unavailable)`.
 - **Apache/WordPress didn't install** → the host waits on the FW egress policy
   (Phase 2b); the systemd installer retries every 60s indefinitely until apt
   succeeds. Read `/var/log/cloud-init-apache.log` on the app host — it now has

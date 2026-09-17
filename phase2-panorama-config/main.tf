@@ -98,6 +98,7 @@ module "panorama_config" {
   app_dnat_public_ip   = var.app_dnat_public_ip
   app_private_ip       = var.app_private_ip
 
+  fw_trust_static_ips   = var.fw_trust_static_ips
   fw_untrust_static_ips = var.fw_untrust_static_ips
   untrust_floating_cidr = var.untrust_floating_cidr
   gp_local_ips          = var.gp_local_ips
@@ -173,6 +174,7 @@ resource "null_resource" "untrust_ip_overrides" {
   triggers = {
     serials   = jsonencode(var.fw_serials)
     primaries = jsonencode(var.fw_untrust_static_ips)
+    tprim     = jsonencode(var.fw_trust_static_ips)
     floatings = jsonencode(var.fw_untrust_floating_ips)
     ugws      = jsonencode(var.fw_untrust_gateways)
     tgws      = jsonencode(var.fw_trust_gateways)
@@ -248,6 +250,22 @@ resource "null_resource" "untrust_ip_overrides" {
       TEMPLATE_STACK    = var.template_stack_name
       VAR_NAME          = "$gp_ip_pool"
       FW_OVERRIDES      = jsonencode({ for k, s in var.fw_serials : s => var.fw_gp_ip_pools[k] })
+    }
+  }
+
+  # TRUST primary IP, per device. Static because the AWS ENI address is fixed
+  # and the DHCP client has been seen failing to re-acquire after a stop/start.
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    command     = "${path.root}/../scripts/set-untrust-overrides.sh"
+    environment = {
+      PANORAMA_HOST     = var.panorama_hostname
+      PANORAMA_PORT     = tostring(var.panorama_port)
+      PANORAMA_USER     = var.panorama_username
+      PANORAMA_PASSWORD = var.panorama_password
+      TEMPLATE_STACK    = var.template_stack_name
+      VAR_NAME          = "$fw_trust_ip"
+      FW_OVERRIDES      = jsonencode({ for k, s in var.fw_serials : s => var.fw_trust_static_ips[k] })
     }
   }
 }
