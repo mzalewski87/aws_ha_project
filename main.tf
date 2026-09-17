@@ -141,8 +141,14 @@ module "region_b" {
   key_name         = var.key_name
   ssh_public_key   = var.ssh_public_key
 
-  create_app               = var.region_b_create_app
-  create_dc                = var.region_b_create_dc
+  create_app = var.region_b_create_app
+  create_dc  = var.region_b_create_dc
+  # ONE PKI per forest, not one per region. Region B's domain controller is a
+  # replica of the SAME forest, so a second hierarchy there would be a separate
+  # trust anchor that no client is configured to trust — and the offline root
+  # lives in Region A. Region B enrolls against the Region A issuing CA over the
+  # cross-region TGW peering, like any other domain member.
+  create_pki               = false
   dc_domain_name           = var.dc_domain_name
   dc_safe_mode_password    = var.dc_safe_mode_password
   dc_promote_to_dc         = var.dc_promote_to_dc

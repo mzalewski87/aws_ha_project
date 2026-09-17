@@ -107,7 +107,7 @@ say "submitting the CSR to the AD CS issuing CA"
 CSR_B64="$(base64 < /tmp/panos-fwd-trust.csr | tr -d '\n')"
 CID="$(aws ssm send-command --region "$REGION" --instance-ids "$SUB_ID" \
       --document-name AWS-RunPowerShellScript --timeout-seconds 600 \
-      --parameters "commands=$(jq -Rs '[.]' <<PSEOF
+      --parameters "commands=$(jq -R -s 'rtrimstr("\n") | split("\n")' <<PSEOF
 \$ErrorActionPreference='Stop'
 [IO.File]::WriteAllBytes('C:\\panos.req', [Convert]::FromBase64String('${CSR_B64}'))
 Remove-Item 'C:\\panos.cer' -ErrorAction SilentlyContinue

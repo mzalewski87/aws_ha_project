@@ -36,12 +36,16 @@ say() { printf '[pki] %s\n' "$*"; }
 
 # Run PowerShell on an instance and print stdout. Fails loudly: a silent
 # RunCommand failure here would leave a half-built CA that is worse than none.
+# SSM's `commands` is a LIST — one element per line. Passing the whole script as
+# a single JSON string (jq -Rs '[.]') sends it as ONE line containing literal
+# \n characters, and PowerShell then dies with MissingEndCurlyBrace on the first
+# multi-line block. Split on newlines instead.
 run_ps() { # $1 = instance, $2 = powershell, $3 = label, $4 = timeout secs
   local inst="$1" ps="$2" label="$3" tmo="${4:-600}"
   local cid
   cid="$(aws ssm send-command --region "$REGION" --instance-ids "$inst" \
         --document-name AWS-RunPowerShellScript \
-        --parameters "commands=$(printf '%s' "$ps" | jq -Rs '[.]')" \
+        --parameters "commands=$(printf '%s' "$ps" | jq -R -s 'rtrimstr("\n") | split("\n")')" \
         --timeout-seconds "$tmo" \
         --query 'Command.CommandId' --output text)"
   local status=""
@@ -64,6 +68,12 @@ run_ps() { # $1 = instance, $2 = powershell, $3 = label, $4 = timeout secs
   fi
   printf '%s' "$out"
 }
+
+# Extract only what sits between the markers. RunCommand output is a shared
+# stream: Install-AdcsCertificationAuthority emits a WARNING ("the installation
+# is incomplete...") that otherwise ends up concatenated with the base64 and
+# makes it undecodable. Never parse raw RunCommand stdout as data.
+b64_between() { sed -n '/---B64BEGIN---/,/---B64END---/p' | sed '1d;$d' | tr -d '\r\n '; }
 
 wait_ssm() { # $1 = instance, $2 = label
   say "waiting for SSM on $2 ($1)"
@@ -99,12 +109,14 @@ if (-not (Test-Path 'C:\\*.req')) {
     -CACommonName '${SUB_CN}' \`
     -KeyLength 4096 -HashAlgorithmName SHA256 \`
     -CryptoProviderName 'RSA#Microsoft Software Key Storage Provider' \`
-    -Credential \$cred -Force -ErrorAction SilentlyContinue | Out-Null
+    -Credential \$cred -Force -ErrorAction SilentlyContinue -WarningAction SilentlyContinue | Out-Null
 }
 \$req = Get-ChildItem 'C:\\*.req' | Select-Object -First 1
 if (-not \$req) { Write-Error 'no CSR produced'; exit 1 }
+'---B64BEGIN---'
 [Convert]::ToBase64String([IO.File]::ReadAllBytes(\$req.FullName))
-" "sub-ca-role" 900 | tr -d '\r\n ' > /tmp/pki-sub.csr.b64
+'---B64END---'
+" "sub-ca-role" 900 | b64_between > /tmp/pki-sub.csr.b64
 say "CSR captured ($(wc -c < /tmp/pki-sub.csr.b64) b64 bytes)"
 
 # --- 3. root CA: sign it -----------------------------------------------------
@@ -124,8 +136,10 @@ if (-not (Test-Path 'C:\\sub.cer')) {
   if (\$id) { certutil -resubmit \$id | Out-Null; certreq -retrieve \$id 'C:\\sub.cer' | Out-Null }
 }
 if (-not (Test-Path 'C:\\sub.cer')) { Write-Error \"signing failed: \$out\"; exit 1 }
+'---B64BEGIN---'
 [Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\\sub.cer'))
-" "root-sign" 600 | tr -d '\r\n ' > /tmp/pki-sub.cer.b64
+'---B64END---'
+" "root-sign" 600 | b64_between > /tmp/pki-sub.cer.b64
 say "issuing CA certificate signed"
 
 # also grab the root certificate itself — needed for the AD trust publication
@@ -133,8 +147,10 @@ run_ps "$ROOT_ID" "
 \$c = Get-ChildItem Cert:\\LocalMachine\\CA,Cert:\\LocalMachine\\Root |
       Where-Object { \$_.Subject -like '*${CA_ROOT_CN:-PANW Lab Root CA}*' } | Select-Object -First 1
 if (-not \$c) { Write-Error 'root cert not found'; exit 1 }
+'---B64BEGIN---'
 [Convert]::ToBase64String(\$c.RawData)
-" "root-cert" 300 | tr -d '\r\n ' > /tmp/pki-root.cer.b64
+'---B64END---'
+" "root-cert" 300 | b64_between > /tmp/pki-root.cer.b64
 
 # --- 4. issuing CA: install the signed certificate ---------------------------
 say "installing the signed certificate on the issuing CA"

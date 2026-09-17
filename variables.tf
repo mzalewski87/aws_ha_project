@@ -351,7 +351,13 @@ variable "web_app_hostname" {
 }
 
 variable "enable_pki" {
-  description = "Stand up the two-tier AD CS PKI in Region A's spoke2 (offline root CA + enterprise issuing CA), the trust anchor for SSL Forward Proxy. Requires dc_promote_to_dc and dc_ad_test_user_password. Adds 2 Windows instances; the root is stopped after it signs the issuing CA, so only the issuing CA runs continuously."
+  description = "Two-tier AD CS PKI in Region A's spoke2 (offline root CA + enterprise issuing CA) — the trust anchor for SSL Forward Proxy. MANDATORY COMPONENT: TLS interception is a core capability of this architecture, so the PKI is built by default and the deployment is not considered complete without it. Requires dc_promote_to_dc and dc_ad_test_user_password. Adds 2 Windows instances; the root is stopped once it has signed the issuing CA, so only the issuing CA runs continuously. Set false only for a deliberately cut-down lab."
+  type        = bool
+  default     = true
+}
+
+variable "enable_ssl_decryption" {
+  description = "Activate the SSL Forward Proxy rules. The rules and both CA certificates are ALWAYS created (see enable_pki); this only flips them on. Kept false by default on purpose — a client that does not yet trust the root CA gets a certificate error on every HTTPS site, and a freshly built domain member only picks the root up at its first policy refresh. Turn on once `Get-ChildItem Cert:\\LocalMachine\\Root` on a client shows the root, or run `scripts/setup-ssl-decrypt.sh enable`."
   type        = bool
   default     = false
 }
