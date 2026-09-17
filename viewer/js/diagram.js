@@ -67,7 +67,7 @@ const I18N_DIAGRAM = {
     secVpcB_title: "Security VPC B (10.20.0.0/16) — Standby HA Cluster",
     regionB_highlights_title: "Region B Resilience Highlights",
     regionB_hl1: "✓ Identical Terraform module (region_stack)",
-    regionB_hl2: "✓ Centrally governed by Panorama A over TGW Peering",
+    regionB_hl2: "✓ Centrally governed by the Region A Panorama over TGW peering",
     regionB_hl3: "✓ AD replication over AWS private backbone",
     regionB_hl4: "✓ Complete isolation from Region A failures"
   }
@@ -107,7 +107,7 @@ class ArchitectureDiagram {
   }
 
   setupViewport() {
-    this.svg.setAttribute("viewBox", "0 0 1780 1060");
+    this.svg.setAttribute("viewBox", "0 0 1860 1060");
     this.svg.innerHTML = `
       <defs>
         <!-- Gradients -->
@@ -267,7 +267,7 @@ class ArchitectureDiagram {
 
     // Region Box
     regionsLayer.insertAdjacentHTML("beforeend", `
-      <rect id="region-a" class="region-box region-a" x="60" y="130" width="810" height="${regHeight}" />
+      <rect id="region-a" class="region-box region-a" x="60" y="130" width="860" height="${regHeight}" />
       <g transform="translate(84, 160)">
         <text class="region-label">${this.t("regionA_title")}</text>
         <text class="region-sublabel" y="18">${this.t("regionA_sub")}</text>
@@ -320,7 +320,7 @@ class ArchitectureDiagram {
     } else {
       // --- EXPANDED SECURITY VPC (Deep-Dive Subnets & ENIs) ---
       vpcsLayer.insertAdjacentHTML("beforeend", `
-        <rect class="vpc-box security-vpc" x="84" y="195" width="762" height="340" />
+        <rect class="vpc-box security-vpc" x="84" y="195" width="762" height="360" />
         <text class="vpc-title" x="104" y="220">${this.t("secVpc_expanded_title")}</text>
         <g class="btn-container-toggle" transform="translate(730, 204)" onclick="window.app.toggleSecurityVpc()">
           <rect width="104" height="24" rx="4" fill="#334155" />
@@ -328,21 +328,21 @@ class ArchitectureDiagram {
         </g>
 
         <!-- Untrust Subnet -->
-        <rect class="subnet-box" x="100" y="235" width="730" height="66" />
-        <text class="subnet-label" x="114" y="252">${this.t("untrust_subnet")}</text>
-        <text class="subnet-cidr" x="730" y="252">10.10.10.0/24</text>
+        <rect class="subnet-box" x="100" y="235" width="730" height="80" />
+        <text class="subnet-label" x="114" y="253">${this.t("untrust_subnet")}</text>
+        <text class="subnet-cidr" x="730" y="253">10.10.10.0/24</text>
 
         <!-- Trust Subnet -->
-        <rect class="subnet-box" x="100" y="455" width="730" height="66" />
-        <text class="subnet-label" x="114" y="472">${this.t("trust_subnet")}</text>
-        <text class="subnet-cidr" x="730" y="472">10.10.20.0/24</text>
+        <rect class="subnet-box" x="100" y="464" width="730" height="80" />
+        <text class="subnet-label" x="114" y="482">${this.t("trust_subnet")}</text>
+        <text class="subnet-cidr" x="730" y="482">10.10.20.0/24</text>
       `);
 
       // Untrust Floating EIP
       nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
         id: "untrust-a",
         x: 114,
-        y: 254,
+        y: 265,
         w: 340,
         h: 42,
         title: "Untrust Floating EIP (.100)",
@@ -356,7 +356,7 @@ class ArchitectureDiagram {
       nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
         id: "nlb-a",
         x: 476,
-        y: 254,
+        y: 265,
         w: 340,
         h: 42,
         title: "App NLB (Network Load Balancer)",
@@ -370,7 +370,7 @@ class ArchitectureDiagram {
       nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
         id: "fw1-a",
         x: 114,
-        y: 320,
+        y: 330,
         w: 340,
         h: 114,
         title: "VM-Series FW1 (Active)",
@@ -386,7 +386,7 @@ class ArchitectureDiagram {
       nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
         id: "fw2-a",
         x: 476,
-        y: 320,
+        y: 330,
         w: 340,
         h: 114,
         title: "VM-Series FW2 (Passive)",
@@ -402,7 +402,7 @@ class ArchitectureDiagram {
       nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
         id: "trust-a",
         x: 114,
-        y: 472,
+        y: 494,
         w: 702,
         h: 42,
         title: isEn ? "Trust ENI & Inspection Gateway (ethernet1/2)" : "Trust ENI & Brama Inspekcyjna (ethernet1/2)",
@@ -412,13 +412,13 @@ class ArchitectureDiagram {
         badgeClass: "active-bg"
       }));
 
-      this.nodePositions["fw-pair-a"] = { x: 114, y: 320, w: 702, h: 114, cx: 465, cy: 377 };
+      this.nodePositions["fw-pair-a"] = { x: 114, y: 330, w: 702, h: 114, cx: 465, cy: 387 };
     }
 
     // ==========================================
     // 2. TRANSIT GATEWAY A
     // ==========================================
-    const tgwY = isSecExpanded ? 565 : 375;
+    const tgwY = isSecExpanded ? 580 : 375;
     nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
       id: "tgw-a",
       x: 230,
@@ -435,7 +435,7 @@ class ArchitectureDiagram {
     // ==========================================
     // 3. MANAGEMENT VPC & SPOKES
     // ==========================================
-    const lowerTierY = isSecExpanded ? 665 : 475;
+    const lowerTierY = isSecExpanded ? 680 : 475;
     const lowerTierHeight = isSecExpanded ? 320 : 205;
 
     // Management VPC
@@ -520,7 +520,7 @@ class ArchitectureDiagram {
     const regHeight = isSecExpanded ? 880 : 700;
 
     regionsLayer.insertAdjacentHTML("beforeend", `
-      <g id="region-b" transform="translate(900, 130)">
+      <g id="region-b" transform="translate(980, 130)">
         <rect class="collapsed-card" width="360" height="${regHeight}" rx="14" />
         
         <g transform="translate(24, 32)">
@@ -552,11 +552,11 @@ class ArchitectureDiagram {
 
     // Register virtual anchor targets for Region B interconnects
     const centerY = 130 + regHeight / 2;
-    this.nodePositions["untrust-b"] = { cx: 1080, cy: 180, x: 920, y: 150, w: 320, h: 60 };
-    this.nodePositions["fw-pair-b"] = { cx: 1080, cy: 260, x: 920, y: 220, w: 320, h: 80 };
-    this.nodePositions["fw1-b"] = { cx: 1080, cy: 260, x: 920, y: 220, w: 320, h: 80 };
-    this.nodePositions["tgw-b"] = { cx: 1080, cy: centerY, x: 920, y: centerY - 30, w: 320, h: 60 };
-    this.nodePositions["dc-b"] = { cx: 1080, cy: centerY + 140, x: 920, y: centerY + 110, w: 320, h: 60 };
+    this.nodePositions["untrust-b"] = { cx: 1160, cy: 180, x: 1000, y: 150, w: 320, h: 60 };
+    this.nodePositions["fw-pair-b"] = { cx: 1160, cy: 260, x: 1000, y: 220, w: 320, h: 80 };
+    this.nodePositions["fw1-b"] = { cx: 1160, cy: 260, x: 1000, y: 220, w: 320, h: 80 };
+    this.nodePositions["tgw-b"] = { cx: 1160, cy: centerY, x: 1000, y: centerY - 30, w: 320, h: 60 };
+    this.nodePositions["dc-b"] = { cx: 1160, cy: centerY + 140, x: 1000, y: centerY + 110, w: 320, h: 60 };
   }
 
   renderRegionBExpanded() {
@@ -570,7 +570,7 @@ class ArchitectureDiagram {
 
     // Region B Box
     regionsLayer.insertAdjacentHTML("beforeend", `
-      <rect id="region-b" class="region-box region-b" x="900" y="130" width="810" height="${regHeight}" />
+      <rect id="region-b" class="region-box region-b" x="980" y="130" width="810" height="${regHeight}" />
       <g transform="translate(924, 160)">
         <text class="region-label">${this.t("regionB_exp_title")}</text>
         <text class="region-sublabel" y="18">${this.t("regionB_exp_sub")}</text>
@@ -583,13 +583,13 @@ class ArchitectureDiagram {
 
     // Security VPC B
     vpcsLayer.insertAdjacentHTML("beforeend", `
-      <rect class="vpc-box security-vpc" x="924" y="195" width="762" height="150" />
-      <text class="vpc-title" x="944" y="220">${this.t("secVpcB_title")}</text>
+      <rect class="vpc-box security-vpc" x="1004" y="195" width="762" height="150" />
+      <text class="vpc-title" x="1024" y="220">${this.t("secVpcB_title")}</text>
     `);
 
     nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
       id: "untrust-b",
-      x: 944,
+      x: 1024,
       y: 235,
       w: 350,
       h: 90,
@@ -602,22 +602,22 @@ class ArchitectureDiagram {
 
     nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
       id: "fw1-b",
-      x: 1314,
+      x: 1394,
       y: 235,
       w: 350,
       h: 90,
       title: isEn ? "VM-Series FW Pair B" : "Para VM-Series Region B",
-      sub: isEn ? "FW1 (Active) & FW2 (Passive) | Managed by Panorama A" : "FW1 (Active) & FW2 (Passive) | Zarządzane z Panoramy A",
+      sub: isEn ? "FW1 (Active) / FW2 (Passive) | Panorama in Region A" : "FW1 (Active) / FW2 (Passive) | Panorama w Regionie A",
       icon: "panw-vmseries",
       badge: "DR Ready",
       badgeClass: "active-bg"
     }));
 
     // TGW B
-    const tgwY = isSecExpanded ? 565 : 375;
+    const tgwY = isSecExpanded ? 580 : 375;
     nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
       id: "tgw-b",
-      x: 1070,
+      x: 1150,
       y: tgwY,
       w: 470,
       h: 66,
@@ -629,18 +629,18 @@ class ArchitectureDiagram {
     }));
 
     // Replica DC B
-    const lowerTierY = isSecExpanded ? 665 : 475;
+    const lowerTierY = isSecExpanded ? 680 : 475;
     const lowerTierHeight = isSecExpanded ? 320 : 205;
 
     vpcsLayer.insertAdjacentHTML("beforeend", `
-      <rect class="vpc-box spoke-vpc" x="924" y="${lowerTierY}" width="370" height="${lowerTierHeight}" />
-      <text class="vpc-title" x="944" y="${lowerTierY + 22}">Spoke 2 (Replica DC)</text>
-      <text class="vpc-cidr" text-anchor="end" x="1280" y="${lowerTierY + 22}">10.23/16</text>
+      <rect class="vpc-box spoke-vpc" x="1004" y="${lowerTierY}" width="370" height="${lowerTierHeight}" />
+      <text class="vpc-title" x="1024" y="${lowerTierY + 22}">Spoke 2 (Replica DC)</text>
+      <text class="vpc-cidr" text-anchor="end" x="1360" y="${lowerTierY + 22}">10.23/16</text>
     `);
 
     nodesLayer.insertAdjacentHTML("beforeend", this.createNodeHtml({
       id: "dc-b",
-      x: 944,
+      x: 1024,
       y: lowerTierY + 36,
       w: 330,
       h: 150,
@@ -653,7 +653,7 @@ class ArchitectureDiagram {
 
     // Info panel in Region B
     nodesLayer.insertAdjacentHTML("beforeend", `
-      <g transform="translate(1314, ${lowerTierY})">
+      <g transform="translate(1394, ${lowerTierY})">
         <rect width="372" height="${lowerTierHeight}" rx="10" fill="rgba(30,41,59,0.5)" stroke="#334155" />
         <text x="18" y="28" fill="#E2E8F0" font-size="12" font-weight="700">${this.t("regionB_highlights_title")}</text>
         <text x="18" y="55" fill="#94A3B8" font-size="11">${this.t("regionB_hl1")}</text>
