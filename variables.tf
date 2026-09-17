@@ -349,3 +349,9 @@ variable "web_app_hostname" {
   type        = string
   default     = ""
 }
+
+variable "enable_pki" {
+  description = "Stand up the two-tier AD CS PKI in Region A's spoke2 (offline root CA + enterprise issuing CA), the trust anchor for SSL Forward Proxy. Requires dc_promote_to_dc and dc_ad_test_user_password. Adds 2 Windows instances; the root is stopped after it signs the issuing CA, so only the issuing CA runs continuously."
+  type        = bool
+  default     = false
+}

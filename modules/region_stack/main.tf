@@ -336,6 +336,38 @@ module "spoke1_app" {
 }
 
 # --- Spoke2 Windows DC (optional) -------------------------------------------
+###############################################################################
+# Two-tier PKI (optional) — offline root CA + enterprise issuing CA.
+#
+# Lives in spoke2 next to the domain controller: the issuing CA must be a domain
+# member, and keeping the trust anchor inside the inspected spoke means every
+# enrollment flow crosses the firewall like any other east-west traffic.
+###############################################################################
+module "pki" {
+  count       = var.create_dc && var.create_pki ? 1 : 0
+  source      = "../pki"
+  name_prefix = var.name_prefix
+
+  vpc_id    = module.vpc_spoke2.vpc_id
+  subnet_id = module.vpc_spoke2.subnet_ids_by_role["workload"][0]
+  # .20 and .21, clear of the DC at .10 and of AWS's reserved low addresses.
+  root_ca_private_ip = cidrhost(local.spoke2_subnets["workload"].cidrs[0], 20)
+  sub_ca_private_ip  = cidrhost(local.spoke2_subnets["workload"].cidrs[0], 21)
+
+  domain_name     = var.dc_domain_name
+  dns_resolver_ip = cidrhost(local.spoke2_subnets["workload"].cidrs[0], 10) # the DC
+  # Installing an ENTERPRISE CA writes to the AD configuration partition, so the
+  # account must be an Enterprise Admin. scripts/create-ad-test-user.sh already
+  # makes the AD test user a Domain Admin for the Region B promotion; the same
+  # account is reused here.
+  domain_admin_user     = var.dc_ad_test_user_name
+  domain_admin_password = var.dc_ad_test_user_password
+
+  allowed_internal_cidrs = ["10.0.0.0/8"]
+  key_name               = local.key_name
+  tags                   = var.tags
+}
+
 module "spoke2_dc" {
   count       = var.create_dc ? 1 : 0
   source      = "../spoke2_dc"

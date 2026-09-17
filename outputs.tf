@@ -123,3 +123,13 @@ output "app_instance_id" {
   description = "Region A Apache EC2 instance ID — SSM target for `aws ssm start-session` when the app is not serving."
   value       = module.region_a.app_instance_id
 }
+
+output "pki_root_ca_instance_id" {
+  description = "Offline root CA instance ID — SSM target; stopped after signing the issuing CA."
+  value       = module.region_a.pki_root_ca_instance_id
+}
+
+output "pki_sub_ca_instance_id" {
+  description = "Enterprise issuing CA instance ID — SSM target for certificate signing."
+  value       = module.region_a.pki_sub_ca_instance_id
+}

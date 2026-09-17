@@ -224,3 +224,9 @@ variable "app_acm_certificate_arn" {
   type        = string
   default     = ""
 }
+
+variable "create_pki" {
+  description = "Stand up the two-tier AD CS PKI (offline root + enterprise issuing CA) in spoke2. Required for SSL Forward Proxy: the firewall's re-signing CA is issued by this PKI, and domain members trust it automatically. Requires create_dc."
+  type        = bool
+  default     = false
+}

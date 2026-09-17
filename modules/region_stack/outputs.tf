@@ -115,3 +115,13 @@ output "app_instance_id" {
   description = "Apache EC2 instance ID (SSM target for reading the install log)."
   value       = var.create_app ? module.spoke1_app[0].instance_id : ""
 }
+
+output "pki_root_ca_instance_id" {
+  description = "Offline root CA instance ID (empty when the PKI is disabled)."
+  value       = var.create_dc && var.create_pki ? module.pki[0].root_ca_instance_id : ""
+}
+
+output "pki_sub_ca_instance_id" {
+  description = "Enterprise issuing CA instance ID (empty when the PKI is disabled)."
+  value       = var.create_dc && var.create_pki ? module.pki[0].sub_ca_instance_id : ""
+}

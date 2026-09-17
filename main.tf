@@ -87,6 +87,7 @@ module "region_a" {
   ssh_public_key          = var.ssh_public_key
 
   create_app               = true
+  create_pki               = var.enable_pki
   app_aliases              = local.web_domain_on ? [local.web_fqdn] : []
   app_acm_certificate_arn  = local.web_domain_on ? aws_acm_certificate_validation.web[0].certificate_arn : ""
   create_dc                = true
