@@ -118,3 +118,8 @@ output "transit_gateway_ids" {
     region_b = var.enable_region_b ? module.region_b[0].transit_gateway_id : null
   }
 }
+
+output "app_instance_id" {
+  description = "Region A Apache EC2 instance ID — SSM target for `aws ssm start-session` when the app is not serving."
+  value       = module.region_a.app_instance_id
+}

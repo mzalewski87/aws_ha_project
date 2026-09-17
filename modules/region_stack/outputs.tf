@@ -110,3 +110,8 @@ output "app_cloudfront_hosted_zone_id" {
   description = "Route53 hosted-zone ID of the app CloudFront distribution (for alias records)."
   value       = var.create_app ? module.cloudfront[0].distribution_hosted_zone_id : ""
 }
+
+output "app_instance_id" {
+  description = "Apache EC2 instance ID (SSM target for reading the install log)."
+  value       = var.create_app ? module.spoke1_app[0].instance_id : ""
+}

@@ -1317,8 +1317,20 @@ terraform destroy
   Reachability Analyzer** (see the `Connected: no` entry above) between a
   security-VPC mgmt-subnet ENI and the DC's ENI on TCP/389 to confirm the path.
 - **Apache/WordPress didn't install** → the host waits on the FW egress policy
-  (Phase 2b); the systemd installer retries every 60s indefinitely —
-  `/var/log/cloud-init-apache.log`.
+  (Phase 2b); the systemd installer retries every 60s indefinitely until apt
+  succeeds. Read `/var/log/cloud-init-apache.log` on the app host — it now has
+  an SSM instance profile, so get a shell without a bastion:
+  ```bash
+  aws ssm start-session --target "$(terraform output -raw app_instance_id)"
+  #   sudo cat /var/log/cloud-init-apache.log
+  #   systemctl status apache2-bootstrap.service
+  ```
+  If `systemctl status` reports the unit failed to load rather than failing to
+  run, check it is **not** `Type=oneshot` with `Restart=`: systemd refuses that
+  combination outright ("Restart= setting other than no ... Refusing"), and the
+  retry loop then never runs at all — the install gets only the single attempt
+  cloud-init's `runcmd` gives it. Fixed in `modules/spoke1_app`, but worth
+  recognising if you adapt the pattern elsewhere.
 - **A spoke/DC has no internet access at all, and the FW's traffic log shows
   nothing** (not even a deny) → check whether the security policy actually
   reached the firewall's **running** config, not just Panorama's candidate

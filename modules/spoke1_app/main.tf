@@ -60,6 +60,48 @@ resource "aws_security_group" "app" {
   }
 }
 
+###############################################################################
+# SSM access for the app host
+#
+# WHY: docs/DEPLOYMENT.md's troubleshooting tells you to read
+# /var/log/cloud-init-apache.log when Apache does not come up — but there was no
+# way to reach this host at all. It sits in a spoke behind the firewall with no
+# public IP, no key-based path from the jump host, and (unlike the domain
+# controller) no SSM agent. Live-hit 2026-09-15: the instance was recreated, the
+# page stopped serving, and the documented diagnostic was unreachable.
+#
+# Ubuntu 22.04's AMI ships the SSM agent preinstalled, so an instance profile is
+# all that is needed. Egress to the SSM endpoints goes out through the firewall
+# like any other spoke traffic.
+###############################################################################
+
+data "aws_iam_policy_document" "app_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "app" {
+  name               = "${var.name_prefix}-spoke1-app"
+  assume_role_policy = data.aws_iam_policy_document.app_assume.json
+  tags               = merge(var.tags, { Name = "${var.name_prefix}-spoke1-app" })
+}
+
+resource "aws_iam_role_policy_attachment" "app_ssm" {
+  role       = aws_iam_role.app.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "app" {
+  name = "${var.name_prefix}-spoke1-app"
+  role = aws_iam_role.app.name
+  tags = merge(var.tags, { Name = "${var.name_prefix}-spoke1-app" })
+}
+
 resource "aws_instance" "apache" {
   # data.aws_ami.ubuntu is a `most_recent` lookup, so a newly published Ubuntu
   # AMI makes `ami` drift and forces REPLACEMENT on an unrelated apply. This app
@@ -75,6 +117,7 @@ resource "aws_instance" "apache" {
   subnet_id              = var.subnet_id
   private_ip             = var.private_ip
   vpc_security_group_ids = [aws_security_group.app.id]
+  iam_instance_profile   = aws_iam_instance_profile.app.name
   key_name               = var.key_name
 
   metadata_options {
@@ -154,11 +197,24 @@ write_files:
       After=network-online.target
       Wants=network-online.target
       ConditionPathExists=!/usr/sbin/apache2
+      # Without this, five quick failures (e.g. egress not up yet) trip
+      # systemd's default start-rate limit and the unit is abandoned for good —
+      # exactly the failure this retry loop exists to survive. Belongs in
+      # [Unit] on systemd 229+; [Service] only still works for compatibility.
+      StartLimitIntervalSec=0
 
       [Service]
-      Type=oneshot
+      # NOT Type=oneshot. systemd REFUSES to load a oneshot unit that sets
+      # Restart= to anything but "no" ("Service has Restart= setting other than
+      # no, which isn't allowed for Type=oneshot services. Refusing."), so the
+      # unit never loaded and the advertised infinite retry never ran even once
+      # — the install only ever had the single shot cloud-init's runcmd gave it.
+      # Type=simple keeps Restart=on-failure legal: the script exits 0 once
+      # apache2 is installed and systemd stops retrying; any non-zero exit is
+      # retried after RestartSec. ConditionPathExists is re-evaluated on each
+      # restart, so it also self-terminates once apache2 exists.
+      Type=simple
       ExecStart=/usr/local/sbin/install-apache.sh
-      RemainAfterExit=yes
       Restart=on-failure
       RestartSec=60s
 
