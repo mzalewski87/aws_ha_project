@@ -84,6 +84,19 @@ apps → 2b. FW registration on Panorama → 3. DC/extras → GP layer → Regio
 - Region B replica AD DC for region-outage AD/LDAP authentication failover.
 - Deliverable: survives a whole-region outage.
 
+## Phase TLS — AD CS PKI + SSL Forward Proxy (mandatory)
+
+- Two-tier AD CS in spoke2: offline standalone Root CA + domain-joined
+  Enterprise Issuing CA (`modules/pki`, `enable_pki = true` by default).
+- Root is published into AD (`certutil -dspublish`) so every domain member
+  trusts it automatically, then the root instance is **stopped**.
+- The firewall generates its own key/CSR; AD CS signs it as the forward-trust
+  subordinate. A separate self-signed forward-**untrust** CA is created so
+  genuinely bad server certificates still surface as errors.
+- Decryption rules are staged **disabled** (`enable_ssl_decryption = false`);
+  `scripts/setup-ssl-decrypt.sh enable` flips them once clients trust the root.
+- Depends on Phase 3 (the DC). Scripts: `setup-pki.sh`, `setup-ssl-decrypt.sh`.
+
 ## Optional — EKS + WordPress + EDL
 
 - `optional/eks-deploy/` — `eks_network`, `eks_cluster`, `edl_server` (EDL in

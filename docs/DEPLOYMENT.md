@@ -810,6 +810,109 @@ cross-region routing is up:
 
 ---
 
+## Phase TLS — AD CS PKI + SSL Forward Proxy (mandatory)
+
+TLS interception is a core capability of this architecture, not an optional
+extra: without it the firewall sees only TLS handshakes and its App-ID, URL
+filtering and threat prevention are reduced to guessing from SNI. So the PKI
+that anchors it is built by default (`enable_pki = true`) and the deployment is
+not considered complete until this phase has run.
+
+**Decryption itself ships disabled** (`enable_ssl_decryption = false`). The
+rules and both CA certificates are always created; only activation is deferred.
+Creating and enabling are separate decisions for a concrete reason — a client
+that does not yet trust the root CA gets a certificate error on *every* HTTPS
+site the moment you flip it on, and a freshly domain-joined machine only picks
+the root up at its first policy refresh.
+
+### What gets built
+
+A **two-tier hierarchy**, which is the standard for a reason: the root signs
+exactly one thing in its life and then goes offline, so compromising the
+day-to-day issuing CA does not compromise the trust anchor.
+
+```
+  Offline Root CA (standalone, 4096/SHA256, 26-week CRL)   <- stopped after step 3
+        |
+        +-- Enterprise Issuing CA (domain-joined, published to AD)
+                  |
+                  +-- forward-TRUST CA  -> lives on the firewall
+```
+
+Two certificates on the firewall, and confusing them is the classic mistake:
+
+| Certificate | Signed by | Used when | Client trusts it? |
+|---|---|---|---|
+| `fwd-trust-ca` | AD CS issuing CA | the real server certificate is **valid** | yes, via AD |
+| `fwd-untrust-ca` | self-signed | the real server certificate is **bad** | **no, deliberately** |
+
+The forward-untrust CA is the part people skip. Its whole job is to make a
+broken site *stay* broken: without it the firewall re-signs an expired or
+self-signed upstream certificate with a CA the client trusts, laundering a bad
+site into a green padlock.
+
+The firewall **generates its own key and CSR**; AD CS signs it as a subordinate.
+The forward-trust private key therefore never exists anywhere but the firewall,
+and revoking it does not touch the AD PKI. Exporting the issuing CA's own key
+into Panorama is the easy path and the wrong one.
+
+### Running it
+
+The PKI hosts have no inbound administrative path — everything goes through SSM
+RunCommand. Prerequisite: Phase 3 (the DC) must be complete, because the issuing
+CA is domain-joined and publishes the root into the forest.
+
+```bash
+# 1. two-tier AD CS chain (~15 min; installs the roles, signs, publishes to AD,
+#    then STOPS the root instance)
+export AWS_REGION=eu-central-1
+export ROOT_CA_ID=$(terraform output -raw pki_root_ca_instance_id)
+export SUB_CA_ID=$(terraform output -raw pki_sub_ca_instance_id)
+export DOMAIN=panw.labs DOMAIN_ADMIN=admin
+export DOMAIN_PASSWORD='<root dc_ad_test_user_password>'
+bash scripts/setup-pki.sh
+
+# 2. issue the firewall's forward-trust CA + stage the (disabled) rules.
+#    Needs the SSM tunnel to Panorama up — see ACCESS.md.
+export PANORAMA_PASSWORD='<root panorama_admin_password>'
+bash scripts/setup-ssl-decrypt.sh setup
+```
+
+`setup-pki.sh` is idempotent enough to re-run: each step checks whether its
+output already exists before doing the work.
+
+### Before you enable decryption
+
+The client must trust the root CA first. On a domain-joined machine this is
+automatic but not instant — it lands at the next policy refresh:
+
+```powershell
+gpupdate /force
+Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like '*Root CA*' }
+```
+
+Only once that returns the root:
+
+```bash
+bash scripts/setup-ssl-decrypt.sh enable    # and `disable` to roll back
+```
+
+Two decryption rules are created, order-dependent:
+
+1. `no-decrypt-sensitive` — **first**, and it must stay first. Financial,
+   health and government categories are exempted outright. This is a legal
+   requirement in many jurisdictions, not a courtesy, and it also avoids
+   breaking the certificate-pinned applications that cluster in those
+   categories.
+2. `decrypt-outbound` — everything else, SSL Forward Proxy with the
+   `fwd-proxy-strict` profile.
+
+Expect some breakage regardless: certificate-pinned applications (many mobile
+apps, some updaters) fail by design when intercepted. Add them to the
+no-decrypt rule as you find them, rather than weakening the profile.
+
+---
+
 ## Optional — EKS + WordPress + EDL
 
 See `optional/eks-deploy/README.md`. Order matters: bring up the EDL
@@ -1199,6 +1302,47 @@ terraform destroy
 
 ## Troubleshooting
 
+- **PKI: `setup-pki.sh` hangs on the signing step until SSM times out** → the
+  signing command was run as `certreq -config -`, and `-` means "ask the user to
+  pick a CA". SSM RunCommand runs in session 0 with no desktop, so the picker
+  can never be answered and the command blocks for its full timeout. Always pass
+  the CA explicitly; its sanitised name is the `Active` value under
+  `HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration`. Add `-q`
+  to suppress the remaining prompts. Fixed in the script — recorded here because
+  a hang gives you no error text to search for.
+- **PKI: base64 payload fails with `FromBase64String ... not a valid Base-64
+  string`** → SSM's `StandardOutputContent` is a *shared* stream.
+  `Install-AdcsCertificationAuthority` writes a WARNING ("the installation is
+  incomplete...") into it, which then sits in front of the real base64. Never
+  parse raw RunCommand stdout as data: fence the payload with markers and
+  extract from between them. The tell is a decode error where the *tail* of the
+  string is valid base64 and only the head is prose.
+- **PKI: `certutil -installcert` on the issuing CA hangs forever** (no output
+  after the `-addstore` block, SSM eventually reports `TimedOut`) → installing a
+  subordinate CA certificate validates the entire chain, *including revocation*.
+  The root's CRL distribution points name an offline, non domain-joined machine,
+  so every lookup sits there timing out. Publish the root's **CRL as well as its
+  certificate** into AD *before* installing (`certutil -CRL` on the root to
+  generate it, then `certutil -dspublish -f root.crl` from the domain-joined
+  issuing CA) — that gives the chain engine an `ldap:///` source it can actually
+  reach. The step order in `setup-pki.sh` encodes this: publish-to-AD is step 4,
+  install is step 5. Publishing only the certificate is not enough.
+- **PKI: `certutil -resubmit` fails with `CERTSRV_E_BAD_REQUESTSTATUS` /
+  "Disposition: 2 -- Denied"** → a standalone CA holds every request pending and
+  expects a human in the CA console; a request mishandled once lands in Denied
+  and can never be resubmitted. Don't retry it — set the CA to issue
+  immediately (`certutil -setreg policy\RequestDisposition 1`, then restart
+  `certsvc`) and submit a fresh request. This is acceptable specifically because
+  this root is offline, signs exactly one certificate, and is powered off
+  immediately afterwards.
+- **PKI: `certreq -retrieve` fails with `ERROR_FILE_EXISTS` on `C:\*.rsp`** →
+  certreq asks "Do you wish to overwrite the following file?" for a leftover
+  `.rsp`, and `-q` does **not** suppress that particular prompt. Delete the
+  `.rsp` before every submit *and* every retrieve.
+- **SSM RunCommand dies with `MissingEndCurlyBrace` on the first multi-line
+  PowerShell block** → the script was passed as a single `commands` element
+  containing literal `\n` (the `jq -Rs '[.]'` pattern). `commands` is a list of
+  *lines*: use `jq -R -s 'rtrimstr("\n") | split("\n")'`.
 - **GP app: "Connection Failed — Could not connect to the GlobalProtect
   service"** (and `PanGPA.log` shows `CPanSocket::onConnect ... error code =
   10061`, with the driver log reporting `0xE000022F` / `Driver installation

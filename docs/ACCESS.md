@@ -203,6 +203,47 @@ headless via SSM RunCommand) is documented in
 
 ---
 
+## Joining a test workstation to the domain
+
+The point of joining a client is that it then trusts the AD CS root CA
+automatically, which is the prerequisite for turning on TLS interception
+(see [DEPLOYMENT.md → Phase TLS](DEPLOYMENT.md#phase-tls--ad-cs-pki--ssl-forward-proxy-mandatory)).
+
+The DC is not reachable from the internet, so **connect GlobalProtect first** —
+the join happens over the tunnel.
+
+1. Point the client's DNS at the domain controller. Easiest is to let the VPN do
+   it: with a full-tunnel profile the GP client already gets the DC as its DNS
+   server. Verify before going further, because a domain join fails with a
+   misleading "domain could not be contacted" if DNS is wrong:
+   ```powershell
+   nslookup panw.labs
+   nslookup -type=SRV _ldap._tcp.dc._msdcs.panw.labs
+   ```
+   Both must answer from the DC's private address.
+
+2. Join, using the domain admin account:
+   ```powershell
+   Add-Computer -DomainName panw.labs -Credential (Get-Credential admin@panw.labs) -Restart
+   ```
+
+3. After the reboot, reconnect GlobalProtect and let policy apply. The root CA
+   arrives with it — this is the step people assume is instant and it is not:
+   ```powershell
+   gpupdate /force
+   Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like '*Root CA*' }
+   ```
+
+Only once that last command lists the root is it safe to enable decryption
+(`bash scripts/setup-ssl-decrypt.sh enable`). Enabling it earlier gives the
+client a certificate error on every HTTPS site.
+
+> A non-domain-joined machine can still be used — export the root certificate
+> and import it into `Cert:\LocalMachine\Root` by hand. The domain join is
+> simply the mechanism that makes this automatic for every client.
+
+---
+
 ## Addressing reference
 
 Default CIDR plan (`name_prefix` `awsha`). Region A = `eu-central-1`, Region B =
