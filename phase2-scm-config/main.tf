@@ -92,10 +92,14 @@ resource "scm_interface_management_profile" "mgmt" {
 # a hard AWS requirement (see CLAUDE.md), so the ENI order in modules/firewall
 # is unchanged.
 
+# SCM models folder-level interfaces as `$variable` names with the physical port in
+# `default_value` (a raw "ethernet1/3" is rejected: INVALID_STRING_REGEX). Zones,
+# NAT and the virtual router reference the `$` name; a device can override it.
 resource "scm_ethernet_interface" "untrust" {
-  name    = "ethernet1/3"
-  folder  = local.folder
-  comment = "untrust (public / GP + app ingress)"
+  name          = "$untrust_if"
+  default_value = "ethernet1/3"
+  folder        = local.folder
+  comment       = "untrust (public / GP + app ingress)"
   layer3 = {
     interface_management_profile = scm_interface_management_profile.mgmt.name
     ip                           = [{ name = "$untrust_ip" }]
@@ -104,9 +108,10 @@ resource "scm_ethernet_interface" "untrust" {
 }
 
 resource "scm_ethernet_interface" "trust" {
-  name    = "ethernet1/2"
-  folder  = local.folder
-  comment = "trust (spoke-facing / TGW)"
+  name          = "$trust_if"
+  default_value = "ethernet1/2"
+  folder        = local.folder
+  comment       = "trust (spoke-facing / TGW)"
   layer3 = {
     ip = [{ name = "$trust_ip" }]
   }
@@ -115,22 +120,23 @@ resource "scm_ethernet_interface" "trust" {
 
 # GP portal/gateway bind to the floating /32 on a loopback (a /32 because two
 # /24s on one interface is an "overlapping subnet" error in PAN-OS).
-# SCM's API requires loopback names to be `$variable`-style (pattern ^\$...), so
-# unlike path A's literal "loopback.1" the device-side name is assigned by SCM.
-# [VERIFY LIVE] which loopback.N the firewall ends up with — the device-local GP
-# portal/gateway bind (scripts/scm-gp-local.sh) must use that exact name.
+# SCM's API requires loopback names to be `$variable`-style (pattern ^\$...); the
+# physical name is pinned via default_value so the device-local GP portal/gateway
+# bind (a later, device-local step) can use the literal "loopback.1" like path A.
 resource "scm_loopback_interface" "gp" {
-  name       = "$gp_loopback"
-  folder     = local.folder
-  comment    = "GP portal/gateway + SNAT floating IP"
-  ip         = [{ name = "$untrust_floating" }]
-  depends_on = [scm_variable.folder]
+  name          = "$gp_loopback"
+  default_value = "loopback.1"
+  folder        = local.folder
+  comment       = "GP portal/gateway + SNAT floating IP"
+  ip            = [{ name = "$untrust_floating" }]
+  depends_on    = [scm_variable.folder]
 }
 
 resource "scm_tunnel_interface" "gp" {
-  name    = "tunnel.1"
-  folder  = local.folder
-  comment = "GlobalProtect tunnel"
+  name          = "$gp_tunnel"
+  default_value = "tunnel.1"
+  folder        = local.folder
+  comment       = "GlobalProtect tunnel"
 }
 
 # ---- Zones --------------------------------------------------------------------

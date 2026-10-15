@@ -121,8 +121,12 @@ Pull the addresses from the root outputs `fw_mgmt_private_ips` and
   `Auto-VPN-Default-Snippet`). Check in `scm-verify.sh` that inherited rules do
   not pre-empt our allows.
 - Rule order from `position = "pre"` + the `depends_on` chain.
-- `loopback.N` the device assigns for `$gp_loopback` (SCM requires `$`-style
-  loopback names).
+- Interface naming (learned from the first live apply): SCM rejects raw port names
+  (`ethernet1/3`, `tunnel.1`) at folder level. Folder interfaces are `$variable`
+  names (`$untrust_if`, `$trust_if`, `$gp_tunnel`, `$gp_loopback`) with the physical
+  port in `default_value`; zones, NAT and the virtual router reference the `$`
+  names. Confirm on the device that they resolve to `ethernet1/3`, `ethernet1/2`,
+  `tunnel.1`, `loopback.1`.
 - The push response's job-id field (the spec doesn't document it).
 
 ## Phase B3 — DC, PKI

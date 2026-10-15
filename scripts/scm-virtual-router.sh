@@ -15,8 +15,9 @@
 # so the same router works on both firewalls.
 #
 # Usage: scm-virtual-router.sh <folder> [internal_supernet=10.0.0.0/8]
-# Interfaces are the Terraform-managed ones (ethernet1/3 untrust, ethernet1/2
-# trust, tunnel.1 GP, plus the GP loopback device-side name in LOOPBACK_IF).
+# Interfaces are the Terraform-managed folder interfaces, referenced by their SCM
+# `$variable` names ($untrust_if -> ethernet1/3, $trust_if -> ethernet1/2,
+# $gp_tunnel -> tunnel.1, $gp_loopback -> loopback.1).
 ###############################################################################
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,18 +27,15 @@ source "$HERE/scm-lib.sh"
 FOLDER="${1:?usage: $0 <folder> [internal_supernet]}"
 SUPERNET="${2:-10.0.0.0/8}"
 VR_NAME="${VR_NAME:-vr-aws}"
-# [VERIFY LIVE] the loopback's device-side name; SCM assigns it from $gp_loopback.
-# Leave empty to omit it from the router until it is known.
-LOOPBACK_IF="${LOOPBACK_IF:-}"
 
-body="$(jq -nc --arg n "$VR_NAME" --arg sup "$SUPERNET" --arg lb "$LOOPBACK_IF" '
+body="$(jq -nc --arg n "$VR_NAME" --arg sup "$SUPERNET" '
   {
     name: $n,
     description: "AWS transit VR (managed by scm-virtual-router.sh)",
-    interface: (["ethernet1/3","ethernet1/2","tunnel.1"] + (if $lb != "" then [$lb] else [] end)),
+    interface: ["$untrust_if", "$trust_if", "$gp_tunnel", "$gp_loopback"],
     routing_table: { ip: { static_route: [
-      { name:"default-to-igw",  destination:"0.0.0.0/0", interface:"ethernet1/3", nexthop:{ ip_address:"$untrust_gw" } },
-      { name:"internal-to-tgw", destination:$sup,        interface:"ethernet1/2", nexthop:{ ip_address:"$trust_gw" } }
+      { name:"default-to-igw",  destination:"0.0.0.0/0", interface:"$untrust_if", nexthop:{ ip_address:"$untrust_gw" } },
+      { name:"internal-to-tgw", destination:$sup,        interface:"$trust_if", nexthop:{ ip_address:"$trust_gw" } }
     ] } }
   }')"
 
