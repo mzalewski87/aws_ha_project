@@ -11,7 +11,7 @@
 #   group-id 1, mode active-passive, preemptive NO (PANW's explicit guidance for
 #   VM-Series on AWS), HA1 on the management port, HA2 on ethernet1/1 with the
 #   HA2 ENI's address (ethernet1/1 MUST be HA2 — hard AWS requirement),
-#   no gateway, default timers, config sync on.
+#   default timers, config sync on. (HA2 gateway: the API insists on one — see ha2_gateway.)
 #
 # HA1 still needs TCP 28769+28260 AND ICMP between the firewalls' mgmt IPs
 # (fw-mgmt security group) — the ICMP heartbeat is sent before the TCP link.
@@ -37,6 +37,15 @@ source "$HERE/scm-lib.sh"
 HA2_NETMASK="${HA2_NETMASK:-255.255.255.0}"
 HA2_PORT="${HA2_PORT:-ethernet1/1}"
 GROUP_ID="${GROUP_ID:-1}"
+# The API REQUIRES an HA2 gateway although the OpenAPI marks it optional (HTTP 400
+# "Gateway failed on the 'required' tag"). Both HA2 ENIs share one subnet, so the
+# gateway is never used for HA2 traffic; default = .1 of the HA2 /24 (the AWS
+# subnet router). Set HA2_GATEWAY to override (needed for non-/24 layouts).
+ha2_gateway() {
+  [ -n "${HA2_GATEWAY:-}" ] && { printf '%s' "$HA2_GATEWAY"; return; }
+  [ "$HA2_NETMASK" = "255.255.255.0" ] || scm_die "set HA2_GATEWAY (netmask $HA2_NETMASK is not /24, cannot derive it)"
+  printf '%s.1' "${1%.*}"
+}
 
 for s in "$PRIMARY_SERIAL" "$SECONDARY_SERIAL"; do
   [[ "$s" =~ ^[0-9]+$ ]] || scm_die "serial '$s' is not numeric — the HA API takes the numeric device ID"
@@ -46,10 +55,10 @@ done
 ha_body() {
   jq -nc --arg dev "$1" --arg peer_s "$2" --arg peer_ip "$3" --arg ha2 "$4" \
          --arg role "$5" --arg prio "$6" --arg mask "$HA2_NETMASK" \
-         --arg port "$HA2_PORT" --arg gid "$GROUP_ID" '
+         --arg port "$HA2_PORT" --arg gid "$GROUP_ID" --arg gw "$(ha2_gateway "$4")" '
     { device: $dev, enabled: true,
       interface: { ha1: { port: "management" },
-                   ha2: { port: $port, ip_address: $ha2, netmask: $mask } },
+                   ha2: { port: $port, ip_address: $ha2, netmask: $mask, gateway: $gw } },
       group: { group_id: $gid, peer_ip: $peer_ip, peer_serial: $peer_s,
                configuration_synchronization: { enabled: true },
                mode: { active_passive: {} },
