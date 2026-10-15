@@ -239,3 +239,25 @@ variable "create_pki" {
   type        = bool
   default     = true
 }
+
+variable "create_guacamole" {
+  description = "Deploy the Guacamole RDP gateway (mgmt VPC) for browser-based access to the DC. Primary region only; needs create_dc."
+  type        = bool
+  default     = false
+}
+variable "guac_certificate_arn" {
+  description = "Issued ACM certificate ARN for the Guacamole hostname (required when create_guacamole)."
+  type        = string
+  default     = ""
+}
+variable "guac_rdp_username" {
+  description = "Optional RDP username pre-provisioned in the Guacamole DC connection (empty = prompt at connect)."
+  type        = string
+  default     = ""
+}
+variable "guac_rdp_password" {
+  description = "Optional RDP password for the pre-provisioned connection (Secrets Manager only; empty = prompt)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

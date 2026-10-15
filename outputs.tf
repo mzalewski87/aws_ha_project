@@ -138,3 +138,13 @@ output "pki_sub_ca_instance_id" {
   description = "Enterprise issuing CA instance ID — SSM target for certificate signing."
   value       = module.region_a.pki_sub_ca_instance_id
 }
+
+output "guacamole_url" {
+  description = "Guacamole RDP gateway URL (null unless enable_guacamole)."
+  value       = local.guac_on ? "https://${local.guac_fqdn}/guacamole/" : null
+}
+
+output "guacamole_admin_secret_arn" {
+  description = "Secrets Manager ARN with the Guacamole admin login (aws secretsmanager get-secret-value)."
+  value       = module.region_a.guacamole_admin_secret_arn
+}

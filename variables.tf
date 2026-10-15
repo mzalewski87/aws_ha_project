@@ -377,3 +377,29 @@ variable "enable_ssl_decryption" {
   type        = bool
   default     = false
 }
+
+# --- Guacamole RDP gateway (both management paths) --------------------------
+variable "enable_guacamole" {
+  description = "Deploy the Apache Guacamole RDP gateway for browser-based, TOTP-protected access to the domain controller (internet-facing ALB, RDP inspected by the firewalls). Requires enable_custom_domain."
+  type        = bool
+  default     = false
+}
+
+variable "guacamole_hostname" {
+  description = "Left label for the Guacamole record, e.g. \"rdp\" -> rdp.<custom_domain_subdomain_zone>."
+  type        = string
+  default     = "rdp"
+}
+
+variable "guac_rdp_username" {
+  description = "Optional RDP username pre-filled in the Guacamole DC connection. Empty = users type credentials at connect time (preferred)."
+  type        = string
+  default     = ""
+}
+
+variable "guac_rdp_password" {
+  description = "Optional RDP password for the pre-provisioned connection (stored in Secrets Manager only). Empty = prompt at connect."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

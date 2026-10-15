@@ -127,3 +127,18 @@ output "pki_sub_ca_instance_id" {
   description = "Enterprise issuing CA instance ID (empty when the PKI is disabled)."
   value       = var.create_dc && var.create_pki ? module.pki[0].sub_ca_instance_id : ""
 }
+
+output "guacamole_alb_dns_name" {
+  value       = local.create_guac ? module.guacamole[0].alb_dns_name : null
+  description = "Guacamole ALB DNS name (alias target for the public hostname)."
+}
+
+output "guacamole_alb_zone_id" {
+  value       = local.create_guac ? module.guacamole[0].alb_zone_id : null
+  description = "Guacamole ALB hosted-zone id (Route53 alias)."
+}
+
+output "guacamole_admin_secret_arn" {
+  value       = local.create_guac ? module.guacamole[0].admin_secret_arn : null
+  description = "Secrets Manager ARN holding the Guacamole admin credentials."
+}

@@ -36,6 +36,11 @@ locals {
   # its log disk are mode-specific; the SSM jump host exists in BOTH modes.
   panorama_mode = var.management_mode == "panorama"
 
+  # Guacamole host subnet (private, NAT egress) in the mgmt VPC. /24s .20/.21 are
+  # contiguous = 10.11.20.0/23 for the default mgmt CIDR (phase2 rule source).
+  create_guac  = var.create_guacamole && var.create_panorama && var.create_dc
+  guac_subnets = local.create_guac ? { guac = { kind = "private", cidrs = [cidrsubnet(local.mg, 8, 20), cidrsubnet(local.mg, 8, 21)] } } : {}
+
   # /24 subnets derived from each /16 (index = 3rd octet).
   security_subnets = {
     mgmt    = { kind = "private", cidrs = [cidrsubnet(local.sec, 8, 0), cidrsubnet(local.sec, 8, 1)] }
@@ -136,7 +141,7 @@ module "vpc_mgmt" {
   name_prefix = "${var.name_prefix}-mgmt"
   vpc_cidr    = local.mg
   azs         = var.azs
-  subnets     = local.mgmt_subnets
+  subnets     = merge(local.mgmt_subnets, local.guac_subnets)
   create_igw  = true
   create_nat  = true
   tags        = merge(var.tags, { Role = "management" })
@@ -182,6 +187,11 @@ module "transit_gateway" {
   tgw_routes_in_vpc = merge(
     { for k, rt in module.vpc_mgmt.route_table_ids : "mgmt-${k}" => { route_table_id = rt, destination_cidr_block = local.sec }
     if startswith(k, "panorama-") || startswith(k, "ssm-") },
+    # Guacamole -> DC: the spoke TGW RT hairpins mgmt<->spoke2 through the security
+    # attachment, so RDP is firewall-inspected. Route only the DC VPC via TGW; the
+    # default route stays on NAT for image pulls/SSM.
+    { for k, rt in module.vpc_mgmt.route_table_ids : "mgmt-guac-${k}" => { route_table_id = rt, destination_cidr_block = local.s2 }
+    if local.create_guac && startswith(k, "guac-") },
     { for k, rt in module.vpc_security.route_table_ids : "sec-${k}" => { route_table_id = rt, destination_cidr_block = local.mg }
     if startswith(k, "mgmt-") },
     { for k, rt in module.vpc_security.route_table_ids : "sec-spoke2-${k}" => { route_table_id = rt, destination_cidr_block = local.s2 }
@@ -254,6 +264,29 @@ module "ssm_jumphost" {
   key_name  = local.key_name
 
   tags = var.tags
+}
+
+# --- Guacamole RDP gateway (both management paths) --------------------------
+module "guacamole" {
+  count       = local.create_guac ? 1 : 0
+  source      = "../guacamole"
+  name_prefix = var.name_prefix
+
+  vpc_id          = module.vpc_mgmt.vpc_id
+  alb_subnet_ids  = module.vpc_mgmt.subnet_ids_by_role["public"]
+  host_subnet_id  = module.vpc_mgmt.subnet_ids_by_role["guac"][0]
+  certificate_arn = var.guac_certificate_arn
+  key_name        = local.key_name
+
+  rdp_target_host   = cidrhost(local.spoke2_subnets["workload"].cidrs[0], 10)
+  rdp_target_domain = var.dc_domain_name
+  rdp_username      = var.guac_rdp_username
+  rdp_password      = var.guac_rdp_password
+
+  tags = var.tags
+
+  # The DC and the TGW/FW path must exist before users can use the gateway.
+  depends_on = [module.routing]
 }
 
 # --- Firewalls (Active/Passive HA) ------------------------------------------
