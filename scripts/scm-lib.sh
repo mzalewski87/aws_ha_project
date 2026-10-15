@@ -91,6 +91,35 @@ scm_wait_job() {
   scm_log "job ${id} did not finish within ${timeout}s"; return 1
 }
 
+# scm_wait_children PARENT_JOB_ID [TIMEOUT_SECONDS]
+# A config push has TWO levels. The job returned by candidate:push is only SCM's
+# own bookkeeping and finishes FIN/OK as soon as the request is accepted; the real
+# work is one child job per firewall (type CommitAll, status PUSHSENT -> ... -> FIN)
+# that runs the LOCAL commit on the device. Treating the parent as "done" reports
+# success while the firewalls are still committing (or have rejected the config) —
+# the same silent-failure class that path A's commit script once had. So: wait for
+# every child (parent_id == PARENT) to reach FIN and require result OK on all.
+scm_wait_children() {
+  local parent="$1" timeout="${2:-1800}" waited=0 resp kids n_total n_fin n_bad
+  sleep 5   # children are created just after the parent finishes
+  while [ "$waited" -lt "$timeout" ]; do
+    resp="$(scm_api GET "/config/operations/v1/jobs?limit=100")" || return 1
+    kids="$(jq -c --arg p "$parent" '[ (if type=="array" then . else (.data // []) end)[] | select(.parent_id == $p) ]' <<<"$resp")"
+    n_total="$(jq 'length' <<<"$kids")"
+    n_fin="$(jq '[ .[] | select(.status_str == "FIN") ] | length' <<<"$kids")"
+    n_bad="$(jq '[ .[] | select((.status_str == "FIN" and .result_str != "OK") or (.status_str | IN("PUSHFAIL","PUSHABORT","PUSHTIMEOUT"))) ] | length' <<<"$kids")"
+    scm_log "push ${parent}: device jobs ${n_fin}/${n_total} finished, ${n_bad} failed"
+    jq -r '.[] | "    \(.device_name // "?"): \(.status_str)/\(.result_str) \(.summary // "")"' <<<"$kids" >&2
+    if [ "$n_bad" -gt 0 ]; then
+      scm_log "at least one device rejected the push — details above; inspect with GET /config/operations/v1/jobs/<id>"
+      return 1
+    fi
+    [ "$n_total" -gt 0 ] && [ "$n_fin" -eq "$n_total" ] && return 0
+    sleep 15; waited=$((waited + 15))
+  done
+  scm_log "device jobs of push ${parent} did not all finish within ${timeout}s"; return 1
+}
+
 # scm_device_by_hostname KEY -> device JSON (first match) or empty. KEY is a serial
 # (the device `name`) OR a hostname. Prefer the serial: the firewalls take their
 # hostname from DHCP (dhcp-accept-server-hostname=yes), so the init-cfg hostname

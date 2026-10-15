@@ -31,4 +31,8 @@ job="$(jq -r '.job_id // .jobId // .id // (.data // [] | first | .id) // empty' 
 scm_log "push job id: $job"
 
 scm_wait_job "$job" "${PUSH_TIMEOUT:-1200}" || scm_die "push job $job did not finish OK"
-scm_log "push to folder '$FOLDER' finished OK"
+scm_log "SCM accepted the push (job $job) — now waiting for each firewall's local commit"
+
+# The parent job above is only SCM's side. The firewalls commit in child jobs.
+scm_wait_children "$job" "${PUSH_TIMEOUT:-1800}" || scm_die "a firewall did not finish committing OK"
+scm_log "push to folder '$FOLDER' finished OK on every device"
