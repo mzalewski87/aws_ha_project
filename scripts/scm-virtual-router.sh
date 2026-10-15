@@ -40,8 +40,9 @@ body="$(jq -nc --arg n "$VR_NAME" --arg sup "$SUPERNET" '
   }')"
 
 enc="$(scm_urlenc "$FOLDER")"
+# NB: this endpoint returns a bare JSON array (unlike devices/rules, which wrap in .data).
 existing="$(scm_api GET "/config/network/v1/virtual-routers?folder=${enc}&name=$(scm_urlenc "$VR_NAME")" \
-  | jq -r --arg f "$FOLDER" '(.data // []) | map(select(.folder == $f)) | first | .id // empty')"
+  | jq -r --arg f "$FOLDER" '(if type == "array" then . else (.data // []) end) | map(select(.folder == $f)) | first | .id // empty')"
 
 if [ -n "$existing" ]; then
   scm_log "updating virtual router '$VR_NAME' ($existing) in folder '$FOLDER'"
