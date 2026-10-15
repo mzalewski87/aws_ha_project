@@ -91,8 +91,11 @@ scm_wait_job() {
   scm_log "job ${id} did not finish within ${timeout}s"; return 1
 }
 
-# scm_device_by_hostname HOSTNAME -> device JSON (first match) or empty.
+# scm_device_by_hostname KEY -> device JSON (first match) or empty. KEY is a serial
+# (the device `name`) OR a hostname. Prefer the serial: the firewalls take their
+# hostname from DHCP (dhcp-accept-server-hostname=yes), so the init-cfg hostname
+# is overridden and shows up as e.g. ip-10-10-0-11, never "fw1".
 scm_device_by_hostname() {
   scm_api GET "/config/setup/v1/devices?limit=500" \
-    | jq -c --arg h "$1" '(.data // []) | map(select(.hostname == $h)) | first // empty'
+    | jq -c --arg h "$1" '(.data // []) | map(select(.name == $h or .hostname == $h)) | first // empty'
 }

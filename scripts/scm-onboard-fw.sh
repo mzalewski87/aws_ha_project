@@ -15,9 +15,11 @@
 #   3. phase2-scm-config:  terraform apply -parallelism=4        (device overrides)
 #
 # Usage:
-#   scm-onboard-fw.sh <folder> <hostname>=<trust_cidr>,<untrust_cidr> [...]
-#   e.g. scm-onboard-fw.sh AWS-HA-Transit fw1=10.10.20.11/24,10.10.10.11/24 \
-#                                         fw2=10.10.20.12/24,10.10.10.12/24
+#   scm-onboard-fw.sh <folder> <serial|hostname>=<trust_cidr>,<untrust_cidr> [...]
+#   e.g. scm-onboard-fw.sh AWS-HA-Transit <serial1>=10.10.20.11/24,10.10.10.11/24 \
+#                                         <serial2>=10.10.20.12/24,10.10.10.12/24
+#   Use SERIALS: the firewalls take their hostname from DHCP (ip-10-10-0-11), the
+#   init-cfg hostname is overridden. Serials: `show system info` on each firewall.
 #
 # Env: SCM_TSG_ID SCM_CLIENT_ID SCM_CLIENT_SECRET (see scm-lib.sh),
 #      WAIT_MINUTES (default 30), OUT_FILE (default
