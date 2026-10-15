@@ -3,6 +3,11 @@
 # var.enable_region_b. Handoffs for the phased workflow + quick references.
 ###############################################################################
 
+output "management_mode" {
+  description = "Active management path: panorama (A) or scm (B)."
+  value       = var.management_mode
+}
+
 # --- Panorama / management (Phase 2a) ---------------------------------------
 output "panorama_private_ip" {
   description = "Panorama private IP (panos provider target via the SSM tunnel)."

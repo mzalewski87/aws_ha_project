@@ -31,7 +31,9 @@ locals {
 resource "terraform_data" "version_guard" {
   lifecycle {
     precondition {
-      condition     = local._pano_int >= local._fw_int
+      # Only meaningful when Panorama is the manager; Strata Cloud Manager has no
+      # such coupling to the firewall PAN-OS version.
+      condition     = var.management_mode != "panorama" || local._pano_int >= local._fw_int
       error_message = "panorama_version (${var.panorama_version}) must be >= vmseries_version (${var.vmseries_version}). Panorama can manage same-or-older firewalls only, never newer."
     }
   }
@@ -58,6 +60,7 @@ module "region_a" {
   spoke1_vpc_cidr   = var.spoke1_vpc_cidr
   spoke2_vpc_cidr   = var.spoke2_vpc_cidr
 
+  management_mode     = var.management_mode
   create_panorama     = true
   panorama_private_ip = var.panorama_private_ip
   # Secondary regions' firewall (security-VPC) CIDRs, so Panorama's own SG here
@@ -121,6 +124,7 @@ module "region_b" {
   spoke2_vpc_cidr   = var.spoke2_vpc_cidr_b
 
   # Single Panorama (Region A) manages Region B too — no Panorama here.
+  management_mode     = var.management_mode
   create_panorama     = false
   panorama_private_ip = var.panorama_private_ip # Region A Panorama, reached via peering
   # Region A mgmt VPC CIDR so Region B's fw-mgmt SG lets the shared Panorama

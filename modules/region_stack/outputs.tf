@@ -51,18 +51,20 @@ output "fw_ha2_private_ips" {
 }
 
 output "panorama_private_ip" {
-  value       = var.create_panorama ? module.panorama[0].panorama_private_ip : var.panorama_private_ip
-  description = "Panorama IP serving this region."
+  value       = !local.panorama_mode ? null : (var.create_panorama ? module.panorama[0].panorama_private_ip : var.panorama_private_ip)
+  description = "Panorama IP serving this region (null in management_mode = scm)."
 }
 
 output "panorama_instance_id" {
-  value       = var.create_panorama ? module.panorama[0].panorama_instance_id : null
-  description = "Panorama instance ID (primary region only)."
+  value       = var.create_panorama && local.panorama_mode ? module.panorama[0].panorama_instance_id : null
+  description = "Panorama instance ID (primary region, panorama mode only)."
 }
 
 output "ssm_jumphost_instance_id" {
-  value       = var.create_panorama ? module.panorama[0].jumphost_instance_id : null
-  description = "SSM jump host instance ID (primary region only)."
+  value = !var.create_panorama ? null : (
+    local.panorama_mode ? module.panorama[0].jumphost_instance_id : module.ssm_jumphost[0].instance_id
+  )
+  description = "SSM jump host instance ID (primary region only; both management modes)."
 }
 
 output "app_cloudfront_domain" {

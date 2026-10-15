@@ -68,6 +68,22 @@ variable "spoke2_vpc_cidr" {
 
 # --- Panorama ----------------------------------------------------------------
 
+variable "management_mode" {
+  description = <<-EOT
+    Central management plane (two deployment paths from one codebase):
+      "panorama" - path A: self-hosted Panorama + phase2-panorama-config/ (default, live-verified).
+      "scm"      - path B: Strata Cloud Manager + phase2-scm-config/. No Panorama EC2 is created;
+                   firewalls bootstrap with panorama-server=cloud. Needs the fw_registration_pin_*
+                   and fw_auth_code inputs (device certificate / licensing).
+  EOT
+  type        = string
+  default     = "panorama"
+  validation {
+    condition     = contains(["panorama", "scm"], var.management_mode)
+    error_message = "management_mode must be \"panorama\" or \"scm\"."
+  }
+}
+
 variable "panorama_private_ip" {
   description = "Static private IP for Panorama in the mgmt VPC panorama subnet (AZ a)."
   type        = string

@@ -30,6 +30,15 @@ variable "spoke1_vpc_cidr" { type = string }
 variable "spoke2_vpc_cidr" { type = string }
 
 # --- Panorama (single Panorama manages all regions — ADR D6) ----------------
+variable "management_mode" {
+  description = "Central management plane: \"panorama\" (path A, self-hosted Panorama) or \"scm\" (path B, Strata Cloud Manager - no Panorama EC2)."
+  type        = string
+  default     = "panorama"
+  validation {
+    condition     = contains(["panorama", "scm"], var.management_mode)
+    error_message = "management_mode must be \"panorama\" or \"scm\"."
+  }
+}
 variable "create_panorama" {
   description = "Deploy Panorama + SSM jump host in this region (true for the primary region only)."
   type        = bool

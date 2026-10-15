@@ -32,6 +32,10 @@ locals {
   # else the caller-supplied pre-existing name.
   key_name = length(aws_key_pair.this) > 0 ? aws_key_pair.this[0].key_name : var.key_name
 
+  # Path A (Panorama) vs path B (Strata Cloud Manager). Only the Panorama EC2 +
+  # its log disk are mode-specific; the SSM jump host exists in BOTH modes.
+  panorama_mode = var.management_mode == "panorama"
+
   # /24 subnets derived from each /16 (index = 3rd octet).
   security_subnets = {
     mgmt    = { kind = "private", cidrs = [cidrsubnet(local.sec, 8, 0), cidrsubnet(local.sec, 8, 1)] }
@@ -192,6 +196,7 @@ module "bootstrap" {
   source      = "../bootstrap"
   name_prefix = var.name_prefix
 
+  management_mode                       = var.management_mode
   panorama_server                       = var.panorama_private_ip
   panorama_template_stack               = var.panorama_template_stack
   panorama_device_group                 = var.panorama_device_group
@@ -208,7 +213,7 @@ module "bootstrap" {
 
 # --- Panorama (+ SSM jump host) — primary region only -----------------------
 module "panorama" {
-  count       = var.create_panorama ? 1 : 0
+  count       = var.create_panorama && local.panorama_mode ? 1 : 0
   source      = "../panorama"
   name_prefix = var.name_prefix
 
@@ -234,6 +239,19 @@ module "panorama" {
   admin_username       = var.panorama_admin_username
   admin_password       = var.panorama_admin_password
   ssh_private_key_file = var.ssh_private_key_file
+
+  tags = var.tags
+}
+
+# --- SSM jump host for path B (no Panorama module to carry it) ---------------
+module "ssm_jumphost" {
+  count       = var.create_panorama && !local.panorama_mode ? 1 : 0
+  source      = "../ssm_jumphost"
+  name_prefix = var.name_prefix
+
+  vpc_id    = module.vpc_mgmt.vpc_id
+  subnet_id = module.vpc_mgmt.subnet_ids_by_role["ssm"][0]
+  key_name  = local.key_name
 
   tags = var.tags
 }
