@@ -22,9 +22,9 @@ variable "folder_name" {
 }
 
 variable "parent_folder" {
-  description = "Parent of the new folder in the SCM folder tree."
+  description = "Parent of the new folder in the SCM folder tree. NGFW folders live under the \"ngfw-shared\" container; SCM rejects the predefined \"All\" container as a parent (DC_0001). The folder still inherits snippets from All and ngfw-shared."
   type        = string
-  default     = "All"
+  default     = "ngfw-shared"
 }
 
 # ---- Per-device values (handoff from scripts/scm-onboard-fw.sh) ---------------

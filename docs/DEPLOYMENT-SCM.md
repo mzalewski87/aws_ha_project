@@ -115,8 +115,11 @@ Pull the addresses from the root outputs `fw_mgmt_private_ips` and
 **[VERIFY LIVE]**
 - The serial printed by `scm-onboard-fw.sh` is a plain number (the HA API needs
   it; the script aborts otherwise).
-- The folder inherits rules from `All` (e.g. `default`, `Web-Security-Default`).
-  Check in `scm-verify.sh` that they do not pre-empt our allows.
+- The folder is created under `ngfw-shared` (SCM rejects the predefined `All` as a
+  parent, error DC_0001) and inherits snippets from `All` and `ngfw-shared`
+  (`default`, `Web-Security-Default`, `GlobalProtect-Default`,
+  `Auto-VPN-Default-Snippet`). Check in `scm-verify.sh` that inherited rules do
+  not pre-empt our allows.
 - Rule order from `position = "pre"` + the `depends_on` chain.
 - `loopback.N` the device assigns for `$gp_loopback` (SCM requires `$`-style
   loopback names).
