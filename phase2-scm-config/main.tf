@@ -1,0 +1,324 @@
+###############################################################################
+# Phase 2 (path B) — Strata Cloud Manager configuration for the AWS HA pair.
+#
+# SCM equivalent of phase2-panorama-config/ + modules/panorama_config:
+#   Panorama template stack + device group  ->  one SCM folder
+#   template variables + per-device override ->  scm_variable (folder default +
+#                                                device override — NATIVE, so the
+#                                                raw-XML override hack of path A,
+#                                                scripts/set-untrust-overrides.sh,
+#                                                is not needed here)
+#
+# What the `scm` provider (v1.0.x) CANNOT express, and how path B covers it
+# (all verified against the provider schema + pan.dev OpenAPI, 2026-10):
+#   * virtual router            -> scripts/scm-virtual-router.sh (REST; the
+#                                  provider only has the Advanced Routing Engine
+#                                  `logical_router`, which we deliberately avoid
+#                                  so the AWS HA plugin keeps the legacy VR)
+#   * HA2 interface (ha mode)   -> scripts/scm-ha.sh (REST /ha-configurations)
+#   * GP tunnel settings        -> scripts/scm-gp-tunnel-settings.sh (REST)
+#   * GP portal + gateway       -> device-local XML API (SCM has no NGFW
+#                                  portal/gateway object) — scripts/scm-gp-local.sh
+# Rule ORDER: every rule is its own resource and Terraform creates them in
+# parallel, so the allow rules are chained with depends_on and deny-all lives in
+# the `post` rulebase (always evaluated last regardless of creation order).
+###############################################################################
+
+locals {
+  folder = scm_folder.fw.name
+}
+
+resource "scm_folder" "fw" {
+  name        = var.folder_name
+  parent      = var.parent_folder
+  description = "AWS VM-Series Active/Passive HA pair (path B, managed from SCM)"
+}
+
+# ---- Variables: folder default + per-device override -------------------------
+# The default is a placeholder (fw1a's address); each firewall overrides it with
+# its own value, exactly like Panorama template variables overridden by serial.
+locals {
+  folder_vars = {
+    "$trust_ip"         = { type = "ip-netmask", value = var.trust_ip_default }
+    "$untrust_ip"       = { type = "ip-netmask", value = var.untrust_ip_default }
+    "$untrust_floating" = { type = "ip-netmask", value = var.untrust_floating_cidr }
+    "$trust_gw"         = { type = "ip-netmask", value = var.trust_gateway_ip }
+    "$untrust_gw"       = { type = "ip-netmask", value = var.untrust_gateway_ip }
+  }
+}
+
+resource "scm_variable" "folder" {
+  for_each = local.folder_vars
+
+  name   = each.key
+  type   = each.value.type
+  value  = each.value.value
+  folder = local.folder
+}
+
+resource "scm_variable" "device_trust_ip" {
+  for_each = var.fw_devices
+
+  name   = "$trust_ip"
+  type   = "ip-netmask"
+  value  = each.value.trust_ip
+  device = each.key
+  # The firewall must already live in the folder (scripts/scm-onboard-fw.sh).
+  depends_on = [scm_variable.folder]
+}
+
+resource "scm_variable" "device_untrust_ip" {
+  for_each = var.fw_devices
+
+  name       = "$untrust_ip"
+  type       = "ip-netmask"
+  value      = each.value.untrust_ip
+  device     = each.key
+  depends_on = [scm_variable.folder]
+}
+
+# ---- Interfaces ---------------------------------------------------------------
+resource "scm_interface_management_profile" "mgmt" {
+  name         = "allow-mgmt-healthcheck"
+  folder       = local.folder
+  https        = true
+  ssh          = true
+  ping         = true
+  permitted_ip = [for c in var.mgmt_permitted_cidrs : { name = c }]
+}
+
+# ethernet1/1 (HA2, ha mode) is NOT here: the provider has no `ha` interface
+# mode. It is created by scripts/scm-ha.sh, and device_index=1 -> ethernet1/1 is
+# a hard AWS requirement (see CLAUDE.md), so the ENI order in modules/firewall
+# is unchanged.
+
+resource "scm_ethernet_interface" "untrust" {
+  name    = "ethernet1/3"
+  folder  = local.folder
+  comment = "untrust (public / GP + app ingress)"
+  layer3 = {
+    interface_management_profile = scm_interface_management_profile.mgmt.name
+    ip                           = [{ name = "$untrust_ip" }]
+  }
+  depends_on = [scm_variable.folder]
+}
+
+resource "scm_ethernet_interface" "trust" {
+  name    = "ethernet1/2"
+  folder  = local.folder
+  comment = "trust (spoke-facing / TGW)"
+  layer3 = {
+    ip = [{ name = "$trust_ip" }]
+  }
+  depends_on = [scm_variable.folder]
+}
+
+# GP portal/gateway bind to the floating /32 on a loopback (a /32 because two
+# /24s on one interface is an "overlapping subnet" error in PAN-OS).
+# SCM's API requires loopback names to be `$variable`-style (pattern ^\$...), so
+# unlike path A's literal "loopback.1" the device-side name is assigned by SCM.
+# [VERIFY LIVE] which loopback.N the firewall ends up with — the device-local GP
+# portal/gateway bind (scripts/scm-gp-local.sh) must use that exact name.
+resource "scm_loopback_interface" "gp" {
+  name       = "$gp_loopback"
+  folder     = local.folder
+  comment    = "GP portal/gateway + SNAT floating IP"
+  ip         = [{ name = "$untrust_floating" }]
+  depends_on = [scm_variable.folder]
+}
+
+resource "scm_tunnel_interface" "gp" {
+  name    = "tunnel.1"
+  folder  = local.folder
+  comment = "GlobalProtect tunnel"
+}
+
+# ---- Zones --------------------------------------------------------------------
+resource "scm_zone" "untrust" {
+  name   = "untrust"
+  folder = local.folder
+  network = {
+    layer3 = [scm_ethernet_interface.untrust.name, scm_loopback_interface.gp.name]
+  }
+}
+
+resource "scm_zone" "trust" {
+  name   = "trust"
+  folder = local.folder
+  network = {
+    layer3 = [scm_ethernet_interface.trust.name]
+  }
+}
+
+resource "scm_zone" "vpn" {
+  name   = "vpn"
+  folder = local.folder
+  network = {
+    layer3 = [scm_tunnel_interface.gp.name]
+  }
+}
+
+# ---- NAT ----------------------------------------------------------------------
+# Same intent as path A: spokes/GP users SNAT out via the loopback floating IP
+# (the EIP-bearing address); inbound app DNAT targets the floating VIP.
+resource "scm_nat_rule" "outbound_snat" {
+  name        = "outbound-snat"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["trust", "vpn"]
+  to          = ["untrust"]
+  source      = ["any"]
+  destination = ["any"]
+  service     = "any"
+  nat_type    = "ipv4"
+  source_translation = {
+    dynamic_ip_and_port = {
+      interface_address = { interface = scm_loopback_interface.gp.name }
+    }
+  }
+}
+
+resource "scm_nat_rule" "gp_internal_snat" {
+  name        = "gp-internal-snat"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["vpn"]
+  to          = ["trust"]
+  source      = ["any"]
+  destination = ["any"]
+  service     = "any"
+  nat_type    = "ipv4"
+  source_translation = {
+    dynamic_ip_and_port = {
+      interface_address = { interface = scm_ethernet_interface.trust.name }
+    }
+  }
+  depends_on = [scm_nat_rule.outbound_snat]
+}
+
+resource "scm_nat_rule" "inbound_app_dnat" {
+  name        = "inbound-app-dnat"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["untrust"]
+  to          = ["untrust"]
+  source      = ["any"]
+  destination = ["${var.app_dnat_public_ip}/32"]
+  service     = "service-http"
+  nat_type    = "ipv4"
+  destination_translation = {
+    translated_address = var.app_private_ip
+  }
+  source_translation = {
+    dynamic_ip_and_port = {
+      interface_address = { interface = scm_ethernet_interface.trust.name }
+    }
+  }
+  depends_on = [scm_nat_rule.gp_internal_snat]
+}
+
+# ---- Security policy (ordered by depends_on; deny-all in `post`) --------------
+# PAN-OS matches security policy on PRE-NAT addresses, so inbound-app uses the
+# floating VIP, not the Apache IP (see path A / CLAUDE.md).
+resource "scm_security_rule" "guacamole_rdp" {
+  count = length(var.guac_rdp_source_cidrs) > 0 && var.dc_private_ip != "" ? 1 : 0
+
+  name        = "guacamole-rdp-to-dc"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["trust"]
+  to          = ["trust"]
+  source      = var.guac_rdp_source_cidrs
+  destination = ["${var.dc_private_ip}/32"]
+  application = ["ms-rdp"]
+  service     = ["application-default"]
+  action      = "allow"
+  log_end     = true
+}
+
+resource "scm_security_rule" "gp_users_to_internal" {
+  name        = "gp-users-to-internal"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["vpn"]
+  to          = ["trust", "untrust"]
+  source      = ["any"]
+  destination = ["any"]
+  application = ["any"]
+  service     = ["application-default"]
+  action      = "allow"
+  log_end     = true
+  depends_on  = [scm_security_rule.guacamole_rdp]
+}
+
+resource "scm_security_rule" "spokes_outbound" {
+  name        = "spokes-outbound"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["trust"]
+  to          = ["untrust"]
+  source      = ["any"]
+  destination = ["any"]
+  application = ["any"]
+  service     = ["application-default"]
+  action      = "allow"
+  log_end     = true
+  depends_on  = [scm_security_rule.gp_users_to_internal]
+}
+
+resource "scm_security_rule" "inbound_app" {
+  name        = "inbound-app"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["untrust"]
+  to          = ["trust"]
+  source      = ["any"]
+  destination = ["${var.app_dnat_public_ip}/32"]
+  application = ["web-browsing", "ssl"]
+  service     = ["application-default"]
+  action      = "allow"
+  log_end     = true
+  depends_on  = [scm_security_rule.spokes_outbound]
+}
+
+# Inbound GlobalProtect is intrazone untrust->untrust self-traffic and WOULD be
+# eaten by deny-all without this explicit allow.
+resource "scm_security_rule" "gp_portal_gateway_inbound" {
+  name        = "gp-portal-gateway-inbound"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["untrust"]
+  to          = ["untrust"]
+  source      = ["any"]
+  destination = [for ip in var.gp_local_ips : "${ip}/32"]
+  application = ["any"]
+  service     = ["service-https", "service-http", scm_service.gp_ipsec.name]
+  action      = "allow"
+  log_end     = true
+  depends_on  = [scm_security_rule.inbound_app]
+}
+
+resource "scm_security_rule" "deny_all" {
+  name        = "deny-all"
+  folder      = local.folder
+  position    = "post"
+  from        = ["any"]
+  to          = ["any"]
+  source      = ["any"]
+  destination = ["any"]
+  application = ["any"]
+  service     = ["any"]
+  action      = "deny"
+  log_end     = true
+}
+
+# PAN-OS has no built-in service for UDP 4501 (GP IPSec data port); without this
+# the GP rule is TCP-only and tunnels silently fall back to SSL.
+resource "scm_service" "gp_ipsec" {
+  name        = "gp-ipsec-udp4501"
+  folder      = local.folder
+  description = "GlobalProtect IPSec data port"
+  protocol = {
+    udp = { port = "4501" }
+  }
+}
