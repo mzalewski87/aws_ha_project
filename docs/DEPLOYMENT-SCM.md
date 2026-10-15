@@ -59,7 +59,17 @@ Additionally:
   Support Portal. Registration PINs expire (path A hit this: an expired PIN blocks
   the device-certificate fetch), so generate it last, right before the firewalls
   launch. The exact lifetime for this flow is not confirmed — treat it as short.
-- **Software NGFW licensing** for the tenant (auth code / deployment profile).
+- **Software NGFW licensing and — critically — an ACTIVATED deployment profile on
+  the target tenant.** Creating the deployment profile (and getting its auth code)
+  is not enough: it must be **activated against the SCM tenant (TSG) the firewalls
+  will join**, in the Palo Alto Networks portal, **before the firewalls boot**.
+  - You already have an SCM tenant: select that tenant when activating the profile.
+  - You have no tenant yet: create one first (provision the *Strata Cloud Manager*
+    app for a TSG), then activate the profile against it.
+  Without this step the firewalls license fine and even fetch a valid device
+  certificate, but never learn their SCM endpoint and never connect — see
+  [Troubleshooting](#troubleshooting). Exact portal menu names differ between
+  portal versions; the contract is "profile activated for this tenant".
 - Terraform applies against SCM must use **`-parallelism=4`** (the auth API allows
   ~10 concurrent token requests per tenant).
 
@@ -94,7 +104,8 @@ terraform apply -parallelism=4              # 1) folder + defaults + policy
 
 cd ..
 bash scripts/scm-onboard-fw.sh AWS-HA-Transit \
-  fw1=<trust_cidr>,<untrust_cidr> fw2=<trust_cidr>,<untrust_cidr>
+  <serial1>=<trust_cidr>,<untrust_cidr> <serial2>=<trust_cidr>,<untrust_cidr>
+#   (serials from `show system info` — NOT hostnames: DHCP overrides the hostname)
 #   waits for both firewalls to connect, moves them into the folder,
 #   writes phase2-scm-config/fw_devices.auto.tfvars.json   (git-ignored)
 
@@ -180,3 +191,25 @@ guacamole_hostname   = "rdp"          # -> https://rdp.<subdomain>/guacamole/
 SCM tenant: delete the `AWS-HA-Transit` folder and the two devices in the SCM UI
 (or via the API) so a re-deploy starts clean, and note each redeploy consumes
 BYOL licence credits as in path A.
+
+## Troubleshooting
+
+**Firewalls never appear in SCM (`GET /config/setup/v1/devices` returns `[]`).**
+On the firewall CLI (SSH via the SSM jump host) run `show cloud-management-status`:
+
+| Output | Meaning |
+|---|---|
+| `Endpoint:` **empty**, `Connected: no`, DNS/TCP/SSL status empty | The firewall is cloud-managed but was **never given an SCM endpoint**: its serial is not associated with a tenant. The deployment profile was not activated for the tenant (see Phase B0). Licensing and `show device-certificate status` can both look perfectly healthy in this state — that is the trap. |
+| Endpoint set, DNS/TCP/SSL failing | Network problem: outbound HTTPS/DNS from the firewall mgmt subnet (NAT, route, security group egress). |
+
+Once the profile is activated the devices show up under *Available Devices* within
+minutes with no reboot — they keep retrying.
+
+**Hostname is `ip-10-10-0-11`, not `fw1`.** The firewalls take their hostname from
+DHCP (`dhcp-accept-server-hostname=yes` overrides the init-cfg `hostname=`).
+`scm-onboard-fw.sh` therefore takes **serial numbers** (`show system info`); in SCM
+the device `name` is the serial and the `id` equals it.
+
+**Other live findings:** SCM rejects `All` as a parent folder (use `ngfw-shared`) and
+raw port names at folder level (use `$variable` names + `default_value`); see
+[Phase B2](#phase-b2--scm-configuration).
