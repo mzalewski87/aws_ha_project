@@ -22,5 +22,11 @@ hand at a specific phase.
 | `set-gp-tunnel-node.sh` | Phase GP — create the network-side GlobalProtect gateway tunnel node (`network/tunnel/global-protect-gateway`) via the XML API. |
 | `set-gp-local-users.sh` | Phase GP — create GlobalProtect local users with a properly hashed password. |
 | `deploy-gp-client.sh` | Phase GP — download and activate the GlobalProtect agent package on each firewall so the portal can serve the installer. |
+| `scm-lib.sh` | Path B — shared helpers (cached OAuth token, hard-failing API calls, job polling). Source it. |
+| `scm-onboard-fw.sh` | Path B — wait for the firewalls to connect to SCM, move them into the folder, emit per-device tfvars (replaces `register-fw-panorama.sh`). |
+| `scm-virtual-router.sh` | Path B — create/update the legacy virtual router in the SCM folder via REST. |
+| `scm-ha.sh` | Path B — configure native Active/Passive HA from SCM (`/ha-configurations`); replaces `configure-ha.sh`. |
+| `scm-push.sh` | Path B — push the folder's candidate config and wait for the job; a non-OK job fails the script. |
+| `scm-verify.sh` | Path B — read-only report: devices, HA state, security-rule order. |
 | `create-ad-test-user.sh` | Create a test AD user after the DC forest is promoted (invoked by Terraform). |
 | `fix-drift.sh` | Detect drift between Terraform state and the live Panorama configuration. |

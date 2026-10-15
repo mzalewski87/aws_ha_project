@@ -9,6 +9,15 @@ Windows Active Directory domain controller (with a replica DC in Region B); and
 **AWS Global Accelerator** anycast fronts the portal so clients survive a whole
 region outage.
 
+> **Two management paths from one codebase.** `management_mode = "panorama"`
+> (default, **path A**, live-verified) uses a self-hosted Panorama.
+> `management_mode = "scm"` (**path B**, not yet live-verified) uses **Strata
+> Cloud Manager** instead — no Panorama EC2. Both paths include an optional
+> **Apache Guacamole** browser-RDP gateway (TOTP-protected, firewall-inspected)
+> for access to the domain controller. See
+> [docs/DEPLOYMENT-SCM.md](docs/DEPLOYMENT-SCM.md) and decisions D11/D12 in
+> [docs/ARCHITECTURE-DECISION.md](docs/ARCHITECTURE-DECISION.md).
+
 ## What it deploys
 
 - **Active/Passive VM-Series HA pair per region** (HA1 control + HA2 state sync)
@@ -157,6 +166,7 @@ Open it in a full tab; it is a canvas app and uses the width. Runs locally too
 - **[docs/PREREQUISITES.md](docs/PREREQUISITES.md)** — install tools + log in to AWS from the CLI (do this first).
 - **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** — every parameter: which file, required?, where to source it.
 - **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** — the full deploy runbook (phases, verification, tests, teardown, troubleshooting).
+- **[docs/DEPLOYMENT-SCM.md](docs/DEPLOYMENT-SCM.md)** — path B runbook (Strata Cloud Manager instead of Panorama) + Guacamole.
 - **[docs/ACCESS.md](docs/ACCESS.md)** — 🔌 how to connect: RDP to the Windows DC, the Panorama GUI/API, and firewall CLI (all via SSM, no bastion).
 - **[docs/ARCHITECTURE-DECISION.md](docs/ARCHITECTURE-DECISION.md)** — the load-bearing design decisions.
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — phased build order.

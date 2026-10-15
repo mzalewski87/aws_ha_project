@@ -97,6 +97,26 @@ apps → 2b. FW registration on Panorama → 3. DC/extras → GP layer → Regio
   `scripts/setup-ssl-decrypt.sh enable` flips them once clients trust the root.
 - Depends on Phase 3 (the DC). Scripts: `setup-pki.sh`, `setup-ssl-decrypt.sh`.
 
+## Phase B — Path B: Strata Cloud Manager (instead of Panorama)
+
+Selected with `management_mode = "scm"`; shares everything except the management
+plane with path A (see ADR D11, `docs/DEPLOYMENT-SCM.md`).
+
+- B0 prerequisites: SCM tenant + service account + registration PIN + auth code.
+- B1 root apply with no Panorama; firewalls bootstrap with `panorama-server=cloud`.
+- B2 `phase2-scm-config/` (folder, variables, interfaces, zones, NAT, policy) +
+  `scripts/scm-*.sh` (onboard, virtual router, HA, push, verify).
+- B-GP GlobalProtect: portal/gateway/tunnel node applied device-locally over the
+  XML API (SCM has no NGFW object for them) — **built and verified live**.
+- Status: code validated, **not yet applied**; open [VERIFY LIVE] items are listed
+  in `docs/DEPLOYMENT-SCM.md`.
+
+## Phase G — Guacamole RDP gateway (both paths)
+
+`modules/guacamole` + `guacamole.tf`: ALB + ACM + Route53 alias, Docker host in the
+mgmt VPC, mandatory TOTP, RDP to the DC through the firewalls. Enabled with
+`enable_guacamole = true` (needs `enable_custom_domain`).
+
 ## Optional — EKS + WordPress + EDL
 
 - `optional/eks-deploy/` — `eks_network`, `eks_cluster`, `edl_server` (EDL in

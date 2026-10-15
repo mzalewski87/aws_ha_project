@@ -100,6 +100,33 @@ north star.
   object storage → **S3**; block storage → **EBS**. IMDSv2 is required on all
   instances.
 
+### D11 — Two management paths from one codebase (Panorama = A, SCM = B)
+`management_mode = "panorama" | "scm"` selects the management plane; everything
+that is not management (VPCs, TGW, HA pair, DC/PKI, GP, Guacamole) is shared.
+- **A (default)** keeps the self-hosted Panorama and is the live-verified path.
+- **B** uses Strata Cloud Manager: no Panorama EC2, firewalls bootstrap with
+  `panorama-server=cloud` + registration PIN, config lives in one SCM folder
+  (`phase2-scm-config/`, `scm` provider), per-device values via `scm_variable`
+  `device =` overrides.
+- **Scope honesty:** the `scm` provider has no virtual-router (only the ARE
+  `logical_router`), no HA and no HA2 interface mode, and SCM's public API has no
+  NGFW GlobalProtect portal/gateway object. Those are covered by REST scripts
+  (`scripts/scm-*.sh`, from the pan.dev OpenAPI) and, for GP, by device-local XML
+  API as in path A. We stay on the legacy virtual router because the AWS HA
+  plugin's route failover is verified only with it.
+- Prisma Access Agent was rejected: its API is Prisma Access (cloud) only and
+  cannot replace GP on our own VM-Series.
+- Path B is **not yet live-verified**; see `docs/DEPLOYMENT-SCM.md`.
+
+### D12 — Browser RDP access to the DC via Apache Guacamole (both paths)
+A Docker-based Guacamole host in the mgmt VPC behind an internet-facing ALB (ACM
+cert via the Route53 custom-domain zone). RDP to the DC crosses the TGW and the
+firewalls, so it is inspected and logged; it needs an explicit `trust→trust`
+`ms-rdp` allow because `deny-all` also matches intrazone traffic. Because the ALB
+is public by design, the controls are mandatory TOTP, a generated admin password
+in Secrets Manager (default `guacadmin` deleted), no secrets in user-data, IMDSv2,
+encrypted EBS and SSM-only host access.
+
 ## Consequences / risks
 
 - Active/Passive cross-AZ failover for a public EIP is the trickiest AWS-specific
