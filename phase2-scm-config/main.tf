@@ -195,6 +195,9 @@ resource "scm_zone" "trust" {
 resource "scm_zone" "vpn" {
   name   = "vpn"
   folder = local.folder
+  # PAN-OS warns "Zone 'vpn' does not have 'enable-user-identification' turned on for
+  # globalprotect gateway ..." without it; needed for user-based policy on VPN traffic.
+  enable_user_identification = true
   network = {
     layer3 = [scm_tunnel_interface.gp.name]
   }

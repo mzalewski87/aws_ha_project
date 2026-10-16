@@ -1,10 +1,19 @@
 # Deployment Guide — Path B: Strata Cloud Manager
 
-> **STATUS: NOT YET LIVE-VERIFIED.** Path A (Panorama, [DEPLOYMENT.md](DEPLOYMENT.md))
-> has run end-to-end on a real account. Path B has passed `terraform validate` /
-> `fmt` and its REST schemas were read from the pan.dev OpenAPI, but it has not
-> yet been applied. Items that need confirming against a live tenant are marked
-> **[VERIFY LIVE]** here and in the code. Update this banner when they are closed.
+> **STATUS: LIVE-VERIFIED in Region A on a fresh AWS account (2026-10), but NOT yet from
+> a clean single-pass redeploy.** Verified end to end: firewalls on PAN-OS 12.2.3
+> onboard to SCM; folder config (ARE logical router, interfaces, zones, NAT, policy) is
+> pushed and committed on both; Active/Passive HA is configured from SCM and a forced
+> failover moves the EIP, the floating address and the TGW route; Guacamole (TOTP) reaches
+> the domain controller through the firewalls; a GlobalProtect client connects with a
+> Let's Encrypt certificate and reaches the DC.
+>
+> The deployment was reached by iterating: several fixes were applied to a running
+> environment (firewall replacement, Guacamole host replacement), so **a clean
+> from-scratch run of the final code has not been done**. Also NOT verified: the AD CS
+> PKI build (the Sub CA never registered with SSM in this run), Region B / Global
+> Accelerator in path B, and GP client connection time during a failover.
+> Path A (Panorama, [DEPLOYMENT.md](DEPLOYMENT.md)) is unchanged and was verified earlier.
 
 Path B is the same AWS deployment (VPCs, TGW, VM-Series Active/Passive HA pair,
 GlobalProtect, DC + PKI, Guacamole) with **Strata Cloud Manager instead of
@@ -61,8 +70,8 @@ Verified against provider v1.0.13's schema and the pan.dev OpenAPI:
 | Needed | Why not Terraform | Covered by |
 |---|---|---|
 | HA (incl. HA2 on `ethernet1/1`) | no HA resource; `ethernet_interface` has no `ha` mode | `scripts/scm-ha.sh` (REST) |
-| GP portal + gateway | **SCM exposes no NGFW portal/gateway object in its public API** | device-local XML API — **to be built and verified live** |
-| GP tunnel settings | not in the provider | REST `/gp-tunnel-settings` — **to be built live** |
+| GP portal + gateway | **SCM exposes no NGFW portal/gateway object in its public API** | device-local XML API — `scripts/scm-gp-local.sh` (live-verified) |
+| GP tunnel settings | not in the provider | not used: the client IP pool and split tunnel are in the local gateway config |
 
 Prisma Access Agent was evaluated and rejected: its API (`MobileAgent`) belongs to
 Prisma Access (cloud), so it cannot replace GlobalProtect on our own VM-Series.
@@ -169,18 +178,48 @@ Identical to path A (these are AWS/Windows, not management-plane).
 
 ## Phase B-GP — GlobalProtect
 
-The portal, gateway and the gateway's network-side tunnel node
-(`network/tunnel/global-protect-gateway`) have no SCM object, so they are applied
-to each firewall's local configuration over the XML API, exactly as path A did
-for the tunnel node. The tunnel-mode lessons in CLAUDE.md apply unchanged
-(two config subtrees, tunnel interface must be in a VR, client IP pool in exactly
-one place, inbound GP is intrazone `untrust→untrust` and needs its own allow).
+**Live-verified (PAN-OS 12.2.3, ARE, Let's Encrypt):** a GlobalProtect client
+connected to the portal, landed on gateway `gw-a`, and could ping the domain controller.
 
-**[VERIFY LIVE — highest risk of path B]** that locally-defined GP config survives
-SCM pushes. If it does not, the order becomes: push from SCM first, then apply the
-local GP config, and re-apply after every push. This script is intentionally
-**not written yet**: path A's GP bring-up needed live iteration against real
-commit errors, and XML written blind would be rewritten anyway.
+The portal, gateway and the gateway's network-side tunnel node
+(`network/tunnel/global-protect-gateway`) have no SCM object, so `scripts/scm-gp-local.sh`
+writes them to the firewall's LOCAL configuration over the XML API. Everything else GP
+needs is in `phase2-scm-config` (tunnel interface, `vpn` zone with user identification,
+loopback bind address, ARE routing, inbound-GP allow rule).
+
+```bash
+# env (untracked file): SCM_*, GPAPI_PASSWORD, GP_USER_PASSWORD, JUMP_INSTANCE_ID, KEY_FILE,
+#                       GW_FQDN, CERT_CN
+bash scripts/scm-gp-local.sh admin         # temporary local superuser `gpapi`
+bash scripts/scm-gp-local.sh build         # cert (placeholder), TLS, auth, tunnel node, gateway, portal
+bash scripts/scm-gp-local.sh letsencrypt   # real certificate (see below)
+bash scripts/scm-gp-local.sh cleanup       # delete `gpapi` again
+```
+
+What was proven live, and what was not:
+- Local config **survives SCM pushes**, and the HA pair **copies it to the passive unit**
+  (`Running Configuration: synchronized`). After a forced failover the same public address
+  kept serving the portal, with no DNS change.
+- The script picks the **active** unit itself (SCM `ha_state`). Changes made on the passive
+  unit are overwritten by the next HA sync — a first run on the wrong unit cost a pass.
+- The firewall needs the GP **client package** only if the portal should serve the installer;
+  it is not needed for a client that is already installed.
+
+### Certificate: Let's Encrypt, not a self-signed one
+A self-signed certificate whose subject equals its issuer must be flagged as a CA, and a CA
+certificate carries only `keyUsage = Certificate Sign`. Browsers then refuse the site with
+`ERR_SSL_KEY_USAGE_INCOMPATIBLE`. `build` therefore creates a *placeholder*; set
+`custom_domain_cert_mode = "letsencrypt"` (+ `custom_domain_letsencrypt_email`) in the root
+`terraform.tfvars`, apply `module.custom_domain` (DNS-01 in the delegated Route53 zone, so
+the NS delegation must be live), then run `scm-gp-local.sh letsencrypt`. One wildcard
+covers the portal and every gateway name.
+
+### Gotchas found building it (each one failed a real commit)
+- Portal `portal-config` requires `custom-login-page`, `custom-home-page` and
+  `custom-help-page` (`factory-default`).
+- TLS `max-version` must be `tls1-2` — the keyword `max` is rejected.
+- A commit can be refused with "A commit is pending"; retry after the running one ends.
+- The commit job's result is the first **non-empty** `<result>` element.
 
 ## Guacamole (both paths)
 
