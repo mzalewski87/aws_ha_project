@@ -11,11 +11,7 @@
 #
 # What the `scm` provider (v1.0.x) CANNOT express, and how path B covers it
 # (all verified against the provider schema + pan.dev OpenAPI, 2026-10):
-#   * virtual router            -> scripts/scm-virtual-router.sh (REST; the
-#                                  provider only has the Advanced Routing Engine
-#                                  `logical_router`, which we deliberately avoid
-#                                  so the AWS HA plugin keeps the legacy VR)
-#   * HA2 interface (ha mode)   -> scripts/scm-ha.sh (REST /ha-configurations)
+#   * HA + the HA2 interface    -> scripts/scm-ha.sh (REST /ha-configurations)
 #   * GP tunnel settings        -> scripts/scm-gp-tunnel-settings.sh (REST)
 #   * GP portal + gateway       -> device-local XML API (SCM has no NGFW
 #                                  portal/gateway object) — scripts/scm-gp-local.sh
@@ -137,6 +133,46 @@ resource "scm_tunnel_interface" "gp" {
   default_value = "tunnel.1"
   folder        = local.folder
   comment       = "GlobalProtect tunnel"
+}
+
+# ---- Routing: Advanced Routing Engine (logical router) ------------------------
+# Path B deliberately uses ARE, not the legacy virtual router of path A. The
+# firewalls are bootstrapped with advance-routing:enable (init-cfg, scm mode), and
+# SCM's own bootstrap push rejects a config whose interfaces are not in a logical
+# router ("Interface ethernet1/2 has no logical-router configured") — which is what
+# a legacy VR created through REST produced on the first live attempt.
+# Next hops are the folder variables, so the one router serves both firewalls.
+resource "scm_logical_router" "aws" {
+  name   = "lr-aws"
+  folder = local.folder
+
+  vrf = [{
+    name = "default"
+    interface = [
+      scm_ethernet_interface.untrust.name,
+      scm_ethernet_interface.trust.name,
+      scm_tunnel_interface.gp.name,
+      scm_loopback_interface.gp.name,
+    ]
+    routing_table = {
+      ip = {
+        static_route = [
+          {
+            name        = "default-to-igw"
+            destination = "0.0.0.0/0"
+            interface   = scm_ethernet_interface.untrust.name
+            nexthop     = { ip_address = scm_variable.folder["$untrust_gw"].name }
+          },
+          {
+            name        = "internal-to-tgw"
+            destination = var.internal_supernet
+            interface   = scm_ethernet_interface.trust.name
+            nexthop     = { ip_address = scm_variable.folder["$trust_gw"].name }
+          },
+        ]
+      }
+    }
+  }]
 }
 
 # ---- Zones --------------------------------------------------------------------

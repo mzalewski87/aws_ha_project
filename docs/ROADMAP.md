@@ -105,7 +105,7 @@ plane with path A (see ADR D11, `docs/DEPLOYMENT-SCM.md`).
 - B0 prerequisites: SCM tenant + service account + registration PIN + auth code.
 - B1 root apply with no Panorama; firewalls bootstrap with `panorama-server=cloud`.
 - B2 `phase2-scm-config/` (folder, variables, interfaces, zones, NAT, policy) +
-  `scripts/scm-*.sh` (onboard, virtual router, HA, push, verify).
+  `scripts/scm-*.sh` (onboard, HA, push, verify); routing is ARE (`scm_logical_router`).
 - B-GP GlobalProtect: portal/gateway/tunnel node applied device-locally over the
   XML API (SCM has no NGFW object for them) — **built and verified live**.
 - Status: code validated, **not yet applied**; open [VERIFY LIVE] items are listed

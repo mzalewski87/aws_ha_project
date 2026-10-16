@@ -26,9 +26,33 @@ and use this guide for what differs.
 | Registration | `register-fw-panorama.sh` | `scm-onboard-fw.sh` |
 | Commit / push | `configure-panorama.sh commit` | `scm-push.sh` |
 | HA | `configure-ha.sh` (SSH per firewall) | `scm-ha.sh` (SCM `/ha-configurations`) |
-| Version rule | Panorama >= firewall PAN-OS | none (guard is skipped) |
+| Version rule | Panorama >= firewall PAN-OS | none (guard is skipped); path B runs the newest PAN-OS SCM supports |
+| Routing engine | legacy virtual router | **ARE** — `scm_logical_router`; init-cfg `plugin-op-commands=advance-routing:enable` |
 | Logging | Panorama log collector | Strata Logging Service (tenant-side) |
 | Jump host | inside `modules/panorama` | `modules/ssm_jumphost` (still needed) |
+
+## Routing: ARE (logical routers), not the legacy virtual router
+
+Path B uses the Advanced Routing Engine. Two reasons, both seen live: SCM-managed
+firewalls report `advanced_routing: true`, and SCM's own **bootstrap push**
+(`NGFW-Bootstrap-Push`, owner `bootstrapsvc`) is rejected when interfaces are not in
+a logical router (`Interface ethernet1/2 has no logical-router configured`) — which
+is exactly what a legacy virtual router created over REST produced. The router is a
+Terraform resource (`scm_logical_router`: one `default` VRF with the four interfaces
+and two static routes whose next hops are the folder variables), and init-cfg turns
+ARE on from the first boot. **[VERIFY LIVE]** the AWS HA plugin's route/EIP failover
+with ARE (path A's failover was verified only with the legacy virtual router).
+
+## Firmware
+
+The firewalls launch on the newest PAN-OS that is both in the Marketplace for
+VM-Series BYOL and listed by SCM (`GET /config/device/v1/software-versions`) — 12.2.3
+at the time of writing. Set `vmseries_version` in root `terraform.tfvars`. An older
+release (11.1.15) failed SCM's bootstrap push on a tenant DLP data profile that
+references an application (`general-browsing`) it does not know. Changing the
+version recreates the firewalls, consumes BYOL activations again and gives them new
+serials: re-run `scm-onboard-fw.sh`, regenerate the per-device variables and the HA
+config, and delete the old (disconnected) devices from SCM.
 
 ## What the `scm` provider cannot do (and what covers it)
 
@@ -36,7 +60,6 @@ Verified against provider v1.0.13's schema and the pan.dev OpenAPI:
 
 | Needed | Why not Terraform | Covered by |
 |---|---|---|
-| Virtual router | provider only has the Advanced Routing Engine `logical_router`; the AWS HA plugin's route failover is live-verified only with the legacy VR | `scripts/scm-virtual-router.sh` (REST) |
 | HA (incl. HA2 on `ethernet1/1`) | no HA resource; `ethernet_interface` has no `ha` mode | `scripts/scm-ha.sh` (REST) |
 | GP portal + gateway | **SCM exposes no NGFW portal/gateway object in its public API** | device-local XML API — **to be built and verified live** |
 | GP tunnel settings | not in the provider | REST `/gp-tunnel-settings` — **to be built live** |

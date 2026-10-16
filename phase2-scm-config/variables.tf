@@ -103,3 +103,9 @@ variable "dc_private_ip" {
   type        = string
   default     = "10.13.0.10"
 }
+
+variable "internal_supernet" {
+  description = "Internal supernet routed back toward the TGW via the trust interface (covers mgmt, spokes and the Guacamole subnet)."
+  type        = string
+  default     = "10.0.0.0/8"
+}
