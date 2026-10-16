@@ -104,7 +104,16 @@ scm_wait_children() {
   sleep 5   # children are created just after the parent finishes
   while [ "$waited" -lt "$timeout" ]; do
     resp="$(scm_api GET "/config/operations/v1/jobs?limit=100")" || return 1
-    kids="$(jq -c --arg p "$parent" '[ (if type=="array" then . else (.data // []) end)[] | select(.parent_id == $p) ]' <<<"$resp")"
+    # Only judge devices that are connected right now. A device that is still assigned
+    # to the folder but no longer exists (a replaced firewall) always ends PUSHFAIL and
+    # says nothing about the config; it is reported below, not allowed to fail the push.
+    conn="$(scm_api GET "/config/setup/v1/devices?limit=500" \
+      | jq -c '[ (.data // [])[] | select(.is_connected == true) | .name ]')" || return 1
+    skipped="$(jq -c --arg p "$parent" --argjson c "$conn" '[ (if type=="array" then . else (.data // []) end)[]
+      | select(.parent_id == $p and ((.device_name // "") as $d | ($c | index($d)) == null)) | .device_name ]' <<<"$resp")"
+    [ "$skipped" != "[]" ] && scm_log "ignoring push jobs of devices that are not connected: $skipped (remove them from the folder in SCM)"
+    kids="$(jq -c --arg p "$parent" --argjson c "$conn" '[ (if type=="array" then . else (.data // []) end)[]
+      | select(.parent_id == $p and ((.device_name // "") as $d | ($c | index($d)) != null)) ]' <<<"$resp")"
     n_total="$(jq 'length' <<<"$kids")"
     n_fin="$(jq '[ .[] | select(.status_str == "FIN") ] | length' <<<"$kids")"
     n_bad="$(jq '[ .[] | select((.status_str == "FIN" and .result_str != "OK") or (.status_str | IN("PUSHFAIL","PUSHABORT","PUSHTIMEOUT"))) ] | length' <<<"$kids")"
