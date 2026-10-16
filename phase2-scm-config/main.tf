@@ -206,7 +206,13 @@ resource "scm_zone" "vpn" {
 # ---- NAT ----------------------------------------------------------------------
 # Same intent as path A: spokes/GP users SNAT out via the loopback floating IP
 # (the EIP-bearing address); inbound app DNAT targets the floating VIP.
+# Rules and NAT name their zones as plain strings, which Terraform cannot see. Without an
+# explicit dependency, `destroy` deletes zones in parallel with the rules and SCM answers
+# 409 "Node cannot be deleted because of references" (seen live). The first rule of each
+# chain depends on the zones; the later rules inherit it through their own chain.
 resource "scm_nat_rule" "outbound_snat" {
+  depends_on = [scm_zone.untrust, scm_zone.trust, scm_zone.vpn]
+
   name        = "outbound-snat"
   folder      = local.folder
   position    = "pre"
@@ -266,6 +272,8 @@ resource "scm_nat_rule" "inbound_app_dnat" {
 # PAN-OS matches security policy on PRE-NAT addresses, so inbound-app uses the
 # floating VIP, not the Apache IP (see path A / CLAUDE.md).
 resource "scm_security_rule" "guacamole_rdp" {
+  depends_on = [scm_zone.untrust, scm_zone.trust, scm_zone.vpn]
+
   count = length(var.guac_rdp_source_cidrs) > 0 && var.dc_private_ip != "" ? 1 : 0
 
   name        = "guacamole-rdp-to-dc"
@@ -344,6 +352,8 @@ resource "scm_security_rule" "gp_portal_gateway_inbound" {
 }
 
 resource "scm_security_rule" "deny_all" {
+  depends_on = [scm_zone.untrust, scm_zone.trust, scm_zone.vpn]
+
   name        = "deny-all"
   folder      = local.folder
   position    = "post"

@@ -168,5 +168,12 @@ resource "aws_instance" "fw" {
     http_tokens   = "required" # IMDSv2 (bootstrap read path)
   }
 
+  # The Marketplace VM-Series AMI's root volume does NOT delete on termination, so every
+  # destroy/replace orphaned a 60 GB volume that kept billing (found live: 4 leftovers
+  # after one teardown). Make it follow the instance.
+  root_block_device {
+    delete_on_termination = true
+  }
+
   tags = merge(var.tags, { Name = "${var.name_prefix}-${each.key}" })
 }
