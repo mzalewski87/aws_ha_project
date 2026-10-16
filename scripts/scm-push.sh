@@ -18,7 +18,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/scm-lib.sh"
 
 FOLDER="${1:?usage: $0 <folder> [description]}"
-DESC="${2:-terraform/scripts push to ${FOLDER}}"
+DESC="${2:-terraform and scripts push to ${FOLDER}}"
+# The API validates the description against a restricted character set: "+" was
+# rejected live ("push-config -> description ... is invalid") while letters, digits,
+# spaces and . , : - _ were accepted. Replace anything else so a stray symbol in a
+# commit message cannot abort a push.
+DESC="$(printf '%s' "$DESC" | tr -c 'A-Za-z0-9 ._,:-' '_')"
 
 body="$(jq -nc --arg f "$FOLDER" --arg d "$DESC" '{folders:[$f], description:$d}')"
 resp="$(scm_api POST "/config/operations/v1/config-versions/candidate:push" "$body")" \
