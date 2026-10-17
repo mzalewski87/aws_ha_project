@@ -88,9 +88,11 @@ api_login() {
     c="$(curl -sk -m 10 -o /dev/null -w '%{http_code}' "https://127.0.0.1:$LP/php/login.php" 2>/dev/null || true)"
     case "$c" in 200|302) break;; esac; sleep 6
   done
+  # `|| true`: with set -e + pipefail a grep that finds no <key> would end the script SILENTLY
+  # before the check below (seen live: both units "FAILED" with no message at all).
   KEY="$(curl -sk -m 60 -G "$BASE" --data-urlencode type=keygen --data-urlencode user=gpapi \
-         --data-urlencode "password=$GPAPI_PASSWORD" | grep -o '<key>[^<]*' | cut -c6-)"
-  [ -n "$KEY" ] || scm_die "no API key (is the gpapi admin committed? run: $0 admin)"
+         --data-urlencode "password=$GPAPI_PASSWORD" | grep -o '<key>[^<]*' | cut -c6- || true)"
+  [ -n "$KEY" ] || scm_die "no API key from $FW_IP: the gpapi admin does not exist on THIS unit (local config is per unit — run '$0 admin' with FW_IP=$FW_IP) or its management API is not up yet"
 }
 
 ok() { grep -q 'status="success"' <<<"$1"; }
