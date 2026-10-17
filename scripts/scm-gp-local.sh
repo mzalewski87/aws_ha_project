@@ -77,7 +77,13 @@ cli_file() {  # $1 = file of CLI commands; runs them over SSH (admin/cleanup onl
   # A VM-Series answers the SSH banner slowly right after a commit or boot: 10 s / 15 s limits
   # produced "banner exchange timed out" on every attempt (seen live).
   for _ in $(seq 1 8); do perl -e 'alarm 70; exec @ARGV' ssh "${opts[@]}" admin@127.0.0.1 exit >/dev/null 2>&1 && break; sleep 4; done
-  perl -e 'alarm shift; exec @ARGV' 300 ssh -tt "${opts[@]}" admin@127.0.0.1 < "$1" 2>&1 | tr -d '\r' | grep -E "committed|Commit|rror|nvalid" | head -8
+  # The interactive SSH session does not close after the file's `exit`, so the alarm below ends
+  # it (exit 142) even when everything worked — judge success by the firewall's own message,
+  # not by the exit code (the exit code made every successful run look like a failure).
+  local out
+  out="$(perl -e 'alarm shift; exec @ARGV' 240 ssh -tt "${opts[@]}" admin@127.0.0.1 < "$1" 2>&1 | tr -d '\r' || true)"
+  grep -E "committed|Commit|rror|nvalid" <<<"$out" | head -8 || true
+  grep -q "Configuration committed successfully" <<<"$out" || scm_die "no 'Configuration committed successfully' from $FW_IP"
 }
 
 api_login() {
