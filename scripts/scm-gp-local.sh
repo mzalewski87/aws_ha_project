@@ -72,9 +72,11 @@ open_tunnel() {  # $1 = remote port
 cli_file() {  # $1 = file of CLI commands; runs them over SSH (admin/cleanup only)
   : "${KEY_FILE:?KEY_FILE required}"
   local opts=(-i "$KEY_FILE" -p "$LP" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-              -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 -o PreferredAuthentications=publickey)
+              -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=60 -o PreferredAuthentications=publickey)
   open_tunnel 22
-  for _ in $(seq 1 8); do perl -e 'alarm 15; exec @ARGV' ssh "${opts[@]}" admin@127.0.0.1 exit >/dev/null 2>&1 && break; sleep 4; done
+  # A VM-Series answers the SSH banner slowly right after a commit or boot: 10 s / 15 s limits
+  # produced "banner exchange timed out" on every attempt (seen live).
+  for _ in $(seq 1 8); do perl -e 'alarm 70; exec @ARGV' ssh "${opts[@]}" admin@127.0.0.1 exit >/dev/null 2>&1 && break; sleep 4; done
   perl -e 'alarm shift; exec @ARGV' 300 ssh -tt "${opts[@]}" admin@127.0.0.1 < "$1" 2>&1 | tr -d '\r' | grep -E "committed|Commit|rror|nvalid" | head -8
 }
 

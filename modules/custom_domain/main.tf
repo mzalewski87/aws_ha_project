@@ -73,6 +73,12 @@ resource "acme_certificate" "wildcard" {
   common_name               = local.wildcard
   subject_alternative_names = [var.subdomain_zone] # apex too, so gp.<zone> + <zone>
 
+  # lego looks the zone up and polls propagation through a recursive resolver. The machine's
+  # own resolver can hold the PREVIOUS delegation for the old NS TTL (a re-delegated zone
+  # sat cached for ~26 h and failed with "could not find zone _acme-challenge..."), so ask
+  # public resolvers instead.
+  recursive_nameservers = ["1.1.1.1:53", "8.8.8.8:53"]
+
   dns_challenge {
     provider = "route53"
     # lego's route53 provider auth comes from the standard AWS environment /
