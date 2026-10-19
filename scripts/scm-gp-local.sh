@@ -47,6 +47,13 @@ CERT_CN="${CERT_CN:?CERT_CN required (portal FQDN, e.g. gp.<your zone>)}"
 FLOATING="${FLOATING:-10.10.10.100/32}"      # the /32 on the loopback (SCM $untrust_floating)
 IP_POOL="${IP_POOL:-10.10.200.0/24}"
 SPLIT_ROUTES="${SPLIT_ROUTES:-0.0.0.0/0}"
+# What the client's GlobalProtect adapter receives. To JOIN a machine to the AD domain over the
+# VPN it needs both: the domain as DNS suffix AND a DNS server that can resolve it (the domain
+# controller; the AWS VPC resolver does not know the AD zone). Without a suffix the adapter shows
+# an empty "Connection-specific DNS Suffix" (seen live).
+DNS_SERVER_PRIMARY="${DNS_SERVER_PRIMARY:-10.13.0.10}"   # the DC (root output dc_private_ip)
+DNS_SERVER_SECONDARY="${DNS_SERVER_SECONDARY:-}"         # e.g. a second DC
+DNS_SUFFIX="${DNS_SUFFIX:-panw.labs}"                    # root var dc_domain_name
 TUN_IF="tunnel.1"; LOCAL_IF="loopback.1"     # SCM $gp_tunnel / $gp_loopback default_value
 GPUSER="${GPUSER:-gpuser}"
 LP="${LP:-22292}"
@@ -153,11 +160,21 @@ build)
   # 1) Bootstrap certificate. A self-signed cert with identical subject/issuer MUST be a CA,
   #    and a CA cert has keyUsage "Certificate Sign" only, which browsers reject for TLS
   #    (ERR_SSL_KEY_USAGE_INCOMPATIBLE) — so this is only a placeholder until `letsencrypt`.
-  r="$(curl -sk -m 180 "$BASE" --data-urlencode type=op --data-urlencode "key=$KEY" \
-       --data-urlencode "cmd=<request><certificate><generate><certificate-name>gp-cert</certificate-name><name>$CERT_CN</name><algorithm><RSA><rsa-nbits>2048</rsa-nbits></RSA></algorithm><days-till-expiry>825</days-till-expiry><ca>yes</ca></generate></certificate></request>")"
-  if ok "$r" || grep -qi 'already exists' <<<"$r"; then scm_log "OK    bootstrap certificate"; else scm_log "FAIL  certificate: $r"; FAILED=1; fi
+  #    IDEMPOTENCE: `build` is re-run whenever the GP settings change (e.g. DNS). If the real
+  #    certificate (gp-le, from `letsencrypt`) is already on the unit it must stay in use —
+  #    re-pointing the profile at the placeholder silently broke a working, trusted portal.
+  le="$(curl -sk -m 60 -G "$BASE" --data-urlencode type=config --data-urlencode action=get \
+        --data-urlencode "xpath=$VS/certificate/entry[@name='gp-le']" --data-urlencode "key=$KEY" || true)"
+  if grep -q 'name="gp-le"' <<<"$le"; then
+    CERT_USE="gp-le"; scm_log "OK    certificate gp-le already present — keeping it (bootstrap certificate skipped)"
+  else
+    CERT_USE="gp-cert"
+    r="$(curl -sk -m 180 "$BASE" --data-urlencode type=op --data-urlencode "key=$KEY" \
+         --data-urlencode "cmd=<request><certificate><generate><certificate-name>gp-cert</certificate-name><name>$CERT_CN</name><algorithm><RSA><rsa-nbits>2048</rsa-nbits></RSA></algorithm><days-till-expiry>825</days-till-expiry><ca>yes</ca></generate></certificate></request>")"
+    if ok "$r" || grep -qi 'already exists' <<<"$r"; then scm_log "OK    bootstrap certificate"; else scm_log "FAIL  certificate: $r"; FAILED=1; fi
+  fi
   setcfg "$VS/ssl-tls-service-profile/entry[@name='gp-ssl-tls']" \
-    "<certificate>gp-cert</certificate><protocol-settings><min-version>tls1-2</min-version><max-version>tls1-2</max-version></protocol-settings>" "ssl-tls profile"
+    "<certificate>$CERT_USE</certificate><protocol-settings><min-version>tls1-2</min-version><max-version>tls1-2</max-version></protocol-settings>" "ssl-tls profile"
   setcfg "$VS/local-user-database/user/entry[@name='$GPUSER']" "<phash>$(openssl passwd -1 "$GP_USER_PASSWORD")</phash>" "local user $GPUSER"
   setcfg "$VS/authentication-profile/entry[@name='gp-local']" \
     "<method><local-database/></method><allow-list><member>all</member></allow-list>" "authentication profile"
@@ -167,7 +184,7 @@ build)
     "<local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family></local-address><tunnel-interface>$TUN_IF</tunnel-interface>" "tunnel node"
   # 3) Client IP pool in EXACTLY one place (remote-user-tunnel-configs), never also at gateway level.
   setcfg "$VS/global-protect/global-protect-gateway/entry[@name='$GW_NAME']" \
-    "<tunnel-mode>yes</tunnel-mode><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><remote-user-tunnel>$TUN_IF</remote-user-tunnel><client-auth><entry name=\"default\"><authentication-profile>gp-local</authentication-profile><os>Any</os></entry></client-auth><remote-user-tunnel-configs><entry name=\"gp-tunnel-config\"><ip-pool><member>$IP_POOL</member></ip-pool><split-tunneling><access-route><member>$SPLIT_ROUTES</member></access-route></split-tunneling></entry></remote-user-tunnel-configs>" "gateway"
+    "<tunnel-mode>yes</tunnel-mode><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><remote-user-tunnel>$TUN_IF</remote-user-tunnel><client-auth><entry name=\"default\"><authentication-profile>gp-local</authentication-profile><os>Any</os></entry></client-auth><remote-user-tunnel-configs><entry name=\"gp-tunnel-config\"><ip-pool><member>$IP_POOL</member></ip-pool><split-tunneling><access-route><member>$SPLIT_ROUTES</member></access-route></split-tunneling><dns-server><member>$DNS_SERVER_PRIMARY</member>${DNS_SERVER_SECONDARY:+<member>$DNS_SERVER_SECONDARY</member>}</dns-server><dns-suffix><member>$DNS_SUFFIX</member></dns-suffix></entry></remote-user-tunnel-configs>" "gateway"
   # 4) The portal needs the three custom pages or the commit fails ("is missing 'custom-*-page'").
   setcfg "$VS/global-protect/global-protect-portal/entry[@name='$PORTAL_NAME']" \
     "<portal-config><custom-login-page>factory-default</custom-login-page><custom-home-page>factory-default</custom-home-page><custom-help-page>factory-default</custom-help-page><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><client-auth><entry name=\"default\"><authentication-profile>gp-local</authentication-profile><os>Any</os></entry></client-auth></portal-config><client-config><configs><entry name=\"default\"><gateways><external><list><entry name=\"gw-a\"><fqdn>$GW_FQDN</fqdn><priority-rule><entry name=\"Any\"><priority>1</priority></entry></priority-rule></entry></list></external></gateways></entry></configs></client-config>" "portal"
