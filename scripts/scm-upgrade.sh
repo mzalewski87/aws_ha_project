@@ -65,36 +65,33 @@ else
   scm_log "reusing upgrade rule $NAME"
 fi
 
-# The OpenAPI does not say in which time zone start-time is read, and a time that is already
-# past for the server is rejected as "invalid date" (HTTP 500 CH_0001 — seen live when UTC was
-# sent to a tenant that is two hours ahead). So try the tenant's local zone first, then UTC, and
-# report which one the server took. Override with SCM_TZ.
-start_in() { # $1 = time zone -> "YYYY-MM-DD HH:MM", IN_MIN minutes from now in that zone
-  if TZ="$1" date -v+"${IN_MIN}"M +%F >/dev/null 2>&1; then
-    TZ="$1" date -v+"${IN_MIN}"M '+%F %H:%M'
-  else
-    TZ="$1" date -d "+${IN_MIN} minutes" '+%F %H:%M'
-  fi
+# What the live API actually wants (found by probing with disabled schedules; the OpenAPI is
+# wrong on all three points):
+#   * dates are YYYY/MM/DD (slashes). YYYY-MM-DD is rejected as "invalid date" for ANY value,
+#     which looked like a time-zone or "in the past" problem and was neither;
+#   * job_type must be OMITTED (or "download"): "install" is "not an allowed keyword". A schedule
+#     with a download_starttime AND a later install_starttime does download, then install;
+#   * a schedule with no times at all is refused ("install and download time missing").
+# The time zone of start-time is not documented; SCM_TZ (default Europe/Warsaw, the tenant's
+# region) is used. If the server reads another zone the only effect is a different start hour.
+TZN="${SCM_TZ:-Europe/Warsaw}"
+INSTALL_GAP="${INSTALL_GAP_MIN:-15}"   # minutes between the image download and the install
+at_plus() { # $1 = minutes from now -> "YYYY/MM/DD HH:MM" in $TZN (macOS and GNU date)
+  if TZ="$TZN" date -v+"$1"M +%Y >/dev/null 2>&1; then TZ="$TZN" date -v+"$1"M '+%Y/%m/%d %H:%M'
+  else TZ="$TZN" date -d "+$1 minutes" '+%Y/%m/%d %H:%M'; fi
 }
-sid=""; used_tz=""
-for tz in ${SCM_TZ:-Europe/Warsaw} UTC; do
-  read -r START_DATE START_AT <<<"$(start_in "$tz")"
-  sched="$(jq -nc --arg n "$NAME" --arg v "$VERSION" --arg d "$START_DATE" --arg t "$START_AT" \
-    '{name:$n, description:"managed by scm-upgrade.sh", enabled:true, job_type:"install",
-      allow_downgrade:false, ha_orchestration:true, image_version:$v,
-      install_starttime:{date:$d, at:$t}, download_starttime:{date:$d, at:$t},
-      rules:[$n]}')"
-  if resp="$(scm_api POST "$BASE/software-upgrade-schedules" "$sched" 2>/tmp/scm-upgrade-err)"; then
-    sid="$(jq -r '.id // empty' <<<"$resp")"; used_tz="$tz"; break
-  fi
-  if grep -q "invalid date" /tmp/scm-upgrade-err; then
-    scm_log "start time $START_DATE $START_AT in $tz was rejected as an invalid date — trying the next zone"
-  else
-    cat /tmp/scm-upgrade-err >&2; scm_die "could not create the upgrade schedule"
-  fi
-done
-[ -n "$sid" ] || scm_die "no accepted start time (tried ${SCM_TZ:-Europe/Warsaw} and UTC) — check the schedule schema"
-scm_log "schedule $sid: PAN-OS $VERSION on '$FOLDER', HA orchestrated, starts $START_DATE $START_AT ($used_tz)"
+read -r DL_DATE DL_AT <<<"$(at_plus "$IN_MIN")"
+read -r IN_DATE IN_AT <<<"$(at_plus $(( IN_MIN + INSTALL_GAP )))"
+sched="$(jq -nc --arg n "$NAME" --arg v "$VERSION" --arg dd "$DL_DATE" --arg dt "$DL_AT" --arg id "$IN_DATE" --arg it "$IN_AT" \
+  '{name:$n, description:"managed by scm-upgrade.sh", enabled:true,
+    allow_downgrade:false, ha_orchestration:true, image_version:$v,
+    download_starttime:{date:$dd, at:$dt}, install_starttime:{date:$id, at:$it},
+    rules:[$n]}')"
+resp="$(scm_api POST "$BASE/software-upgrade-schedules" "$sched")" \
+  || scm_die "could not create the upgrade schedule (see the API error above)"
+sid="$(jq -r '.id // empty' <<<"$resp")"
+[ -n "$sid" ] || scm_die "schedule created but no id in the response: $resp"
+scm_log "schedule $sid: PAN-OS $VERSION on '$FOLDER', HA orchestrated; download $DL_DATE $DL_AT, install $IN_DATE $IN_AT ($TZN)"
 
 # Poll the status of THIS schedule to a terminal state. The whole upgrade of a pair takes
 # roughly 30-60 minutes; the API drops out while a unit reboots, so tolerate failed polls.
