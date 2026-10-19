@@ -329,6 +329,39 @@ guacamole_hostname   = "rdp"          # -> https://rdp.<subdomain>/guacamole/
 - **[VERIFY LIVE]** TOTP activation through the container's env vars
   (`EXTENSIONS=auth-totp` / `TOTP_ENABLED=true`).
 
+## Optional run C — threat-prevention features (Advanced IP Defense, Frontier Virtual Patching)
+
+Both are licensed through the deployment profile (`Advanced IP Defense`, `Advanced Threat
+Prevention Plus` show up in the firewall's licences). They are optional and off by default.
+
+### Advanced IP Defense — list-based variant (`ip_defense_mode = off | alert | block`)
+PANW publishes the IP-reputation categories as **predefined external dynamic lists** (`panw-aipd-*`,
+`panw-torexit-ip-list`, `panw-bulletproof-ip-list`, `panw-highrisk-ip-list`) that every SCM folder
+inherits — nothing is created in the tenant. `phase2-scm-config` adds a rule at the top of the
+pre-rulebase: `alert` is outbound `allow` + log only (opens nothing, blocks nothing), `block` adds
+outbound and inbound `deny`. Verified live: a firewall expands a list into addresses
+(`panw-aipd-c2-infra-ip-list`: 5500 valid entries; the PAN-OS list type is `predefined-ip`) and
+`test security-policy-match` shows a listed address hitting `ipdef-outbound-alert` while an
+ordinary one hits `spokes-outbound` — without sending any traffic to a real C2 address.
+
+What this is **not**: the newer profile-based delivery (a profile attached to a *zone*, with a
+cloud lookup per IP, PAN-OS 12.2.3+) has no object in the SCM API or the `scm` provider, so it
+is not used here. Hits are visible by rule name in the traffic log (list-based variant), not as
+`aipd` threat-log entries.
+
+Gotcha (cost a pass): **a new SCM security rule is appended to the BOTTOM of the rulebase** — it
+sat at position 10, behind `spokes-outbound`, and could never match. `relative_position = "top"`
+fixes it, but only when the rule is *created*; changing the attribute on an existing rule did not
+move it, so it was destroyed and recreated.
+
+### Frontier Virtual Patching
+Needs the Advanced Threat Prevention Plus licence **and PAN-OS 12.2.4 or later**; it is a
+Vulnerability Protection profile setting (action per severity). The newest Marketplace image is
+12.2.3, so the pair is upgraded in place (`scripts/scm-upgrade.sh`, above). Its pre-disclosure
+signatures target vulnerabilities that are not public, so **they cannot be triggered on demand** and
+PANW documents no test method; any "simulation" can only show that the profile is active and
+read the logs for hits.
+
 ## Teardown
 
 Reverse order, one workspace at a time:
