@@ -292,34 +292,38 @@ resource "scm_security_rule" "ipdef_outbound" {
   count      = local.ipdef_on ? 1 : 0
   depends_on = [scm_zone.untrust, scm_zone.trust, scm_zone.vpn]
 
-  name        = "ipdef-outbound-${var.ip_defense_mode}"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["trust", "vpn"]
-  to          = ["untrust"]
-  source      = ["any"]
-  destination = var.ip_defense_outbound_edls
-  application = ["any"]
-  service     = ["any"]
-  action      = local.ipdef_out
-  log_end     = true
+  name     = "ipdef-outbound-${var.ip_defense_mode}"
+  folder   = local.folder
+  position = "pre"
+  # Without this a new rule is appended at the BOTTOM of the rulebase (seen live: position 10,
+  # behind spokes-outbound, so it could never match and an alert would log nothing).
+  relative_position = "top"
+  from              = ["trust", "vpn"]
+  to                = ["untrust"]
+  source            = ["any"]
+  destination       = var.ip_defense_outbound_edls
+  application       = ["any"]
+  service           = ["any"]
+  action            = local.ipdef_out
+  log_end           = true
 }
 
 resource "scm_security_rule" "ipdef_inbound" {
   count      = var.ip_defense_mode == "block" ? 1 : 0
   depends_on = [scm_security_rule.ipdef_outbound]
 
-  name        = "ipdef-inbound-block"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["untrust"]
-  to          = ["untrust", "trust"]
-  source      = var.ip_defense_inbound_edls
-  destination = ["any"]
-  application = ["any"]
-  service     = ["any"]
-  action      = "deny"
-  log_end     = true
+  name              = "ipdef-inbound-block"
+  folder            = local.folder
+  position          = "pre"
+  relative_position = "top"
+  from              = ["untrust"]
+  to                = ["untrust", "trust"]
+  source            = var.ip_defense_inbound_edls
+  destination       = ["any"]
+  application       = ["any"]
+  service           = ["any"]
+  action            = "deny"
+  log_end           = true
 }
 
 resource "scm_security_rule" "guacamole_rdp" {
