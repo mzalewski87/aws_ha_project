@@ -271,8 +271,59 @@ resource "scm_nat_rule" "inbound_app_dnat" {
 # ---- Security policy (ordered by depends_on; deny-all in `post`) --------------
 # PAN-OS matches security policy on PRE-NAT addresses, so inbound-app uses the
 # floating VIP, not the Apache IP (see path A / CLAUDE.md).
-resource "scm_security_rule" "guacamole_rdp" {
+# ---- Advanced IP Defense, EDL variant (optional, var.ip_defense_mode) ----------
+# PANW publishes the IP-reputation categories as predefined external dynamic lists
+# (panw-aipd-*, panw-torexit, ...) that every folder inherits — nothing to create in the tenant.
+# These rules sit at the TOP of the pre-rulebase so a listed address is handled before any allow.
+#   off   - no rules (default)
+#   alert - outbound only, `allow` + log: nothing is blocked and no access is widened (those
+#           destinations were already reachable through spokes-outbound); the rule name appears
+#           in the traffic log, which is how a hit is seen. No inbound rule in this mode, because
+#           an inbound "allow + log" would OPEN access that deny-all currently refuses.
+#   block - outbound `deny` + inbound `deny` for the listed sources, logged.
+# This is the older list-based delivery. The newer profile-based one (cloud lookup, attached to
+# a ZONE, PAN-OS 12.2.3+) has no object in the SCM API or provider, so it is not used here.
+locals {
+  ipdef_on  = var.ip_defense_mode != "off"
+  ipdef_out = var.ip_defense_mode == "block" ? "deny" : "allow"
+}
+
+resource "scm_security_rule" "ipdef_outbound" {
+  count      = local.ipdef_on ? 1 : 0
   depends_on = [scm_zone.untrust, scm_zone.trust, scm_zone.vpn]
+
+  name        = "ipdef-outbound-${var.ip_defense_mode}"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["trust", "vpn"]
+  to          = ["untrust"]
+  source      = ["any"]
+  destination = var.ip_defense_outbound_edls
+  application = ["any"]
+  service     = ["any"]
+  action      = local.ipdef_out
+  log_end     = true
+}
+
+resource "scm_security_rule" "ipdef_inbound" {
+  count      = var.ip_defense_mode == "block" ? 1 : 0
+  depends_on = [scm_security_rule.ipdef_outbound]
+
+  name        = "ipdef-inbound-block"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["untrust"]
+  to          = ["untrust", "trust"]
+  source      = var.ip_defense_inbound_edls
+  destination = ["any"]
+  application = ["any"]
+  service     = ["any"]
+  action      = "deny"
+  log_end     = true
+}
+
+resource "scm_security_rule" "guacamole_rdp" {
+  depends_on = [scm_zone.untrust, scm_zone.trust, scm_zone.vpn, scm_security_rule.ipdef_inbound]
 
   count = length(var.guac_rdp_source_cidrs) > 0 && var.dc_private_ip != "" ? 1 : 0
 

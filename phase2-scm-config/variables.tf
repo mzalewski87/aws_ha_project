@@ -109,3 +109,37 @@ variable "internal_supernet" {
   type        = string
   default     = "10.0.0.0/8"
 }
+
+# ---- Advanced IP Defense (EDL variant) -----------------------------------------
+variable "ip_defense_mode" {
+  description = "\"off\" (default), \"alert\" (outbound allow+log only, nothing blocked) or \"block\" (outbound and inbound deny). Uses PANW's predefined panw-* external dynamic lists, which every folder inherits; needs a content version that carries them."
+  type        = string
+  default     = "off"
+  validation {
+    condition     = contains(["off", "alert", "block"], var.ip_defense_mode)
+    error_message = "ip_defense_mode must be off, alert or block."
+  }
+}
+
+variable "ip_defense_outbound_edls" {
+  description = "Destination lists matched on traffic LEAVING the protected zones (command-and-control, malware, bulletproof hosting, high risk)."
+  type        = list(string)
+  default = [
+    "panw-aipd-c2-infra-ip-list",
+    "panw-aipd-in-malware-ip-list",
+    "panw-bulletproof-ip-list",
+    "panw-highrisk-ip-list",
+  ]
+}
+
+variable "ip_defense_inbound_edls" {
+  description = "Source lists denied on traffic ARRIVING from the internet in block mode (scanners, exploit services, Tor exits, bulletproof hosting, high risk)."
+  type        = list(string)
+  default = [
+    "panw-aipd-scanning-ip-list",
+    "panw-aipd-vuln-svcs-ip-list",
+    "panw-torexit-ip-list",
+    "panw-bulletproof-ip-list",
+    "panw-highrisk-ip-list",
+  ]
+}
