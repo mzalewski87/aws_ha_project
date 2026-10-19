@@ -66,15 +66,17 @@ else
 fi
 
 # What the live API actually wants (found by probing with disabled schedules; the OpenAPI is
-# wrong on all three points):
+# wrong on these points):
 #   * dates are YYYY/MM/DD (slashes). YYYY-MM-DD is rejected as "invalid date" for ANY value,
 #     which looked like a time-zone or "in the past" problem and was neither;
-#   * job_type must be OMITTED (or "download"): "install" is "not an allowed keyword". A schedule
-#     with a download_starttime AND a later install_starttime does download, then install;
-#   * a schedule with no times at all is refused ("install and download time missing").
-# The time zone of start-time is not documented; SCM_TZ (default Europe/Warsaw, the tenant's
-# region) is used. If the server reads another zone the only effect is a different start hour.
-TZN="${SCM_TZ:-Europe/Warsaw}"
+#   * job_type "install" is "not an allowed keyword". The tenant's own schedules use
+#     "download-install-reboot", which is the full upgrade. Omitting job_type is ACCEPTED but did
+#     nothing at the start time, so always send it;
+#   * a schedule with no times at all is refused ("install and download time missing");
+#   * start-time is read as UTC: a time that was still ahead in UTC but already past in Warsaw
+#     was accepted. (An earlier version sent Warsaw time, which the server read as UTC two hours
+#     later, so the schedule silently waited instead of starting.)
+TZN="${SCM_TZ:-UTC}"
 INSTALL_GAP="${INSTALL_GAP_MIN:-15}"   # minutes between the image download and the install
 at_plus() { # $1 = minutes from now -> "YYYY/MM/DD HH:MM" in $TZN (macOS and GNU date)
   if TZ="$TZN" date -v+"$1"M +%Y >/dev/null 2>&1; then TZ="$TZN" date -v+"$1"M '+%Y/%m/%d %H:%M'
@@ -83,7 +85,7 @@ at_plus() { # $1 = minutes from now -> "YYYY/MM/DD HH:MM" in $TZN (macOS and GNU
 read -r DL_DATE DL_AT <<<"$(at_plus "$IN_MIN")"
 read -r IN_DATE IN_AT <<<"$(at_plus $(( IN_MIN + INSTALL_GAP )))"
 sched="$(jq -nc --arg n "$NAME" --arg v "$VERSION" --arg dd "$DL_DATE" --arg dt "$DL_AT" --arg id "$IN_DATE" --arg it "$IN_AT" \
-  '{name:$n, description:"managed by scm-upgrade.sh", enabled:true,
+  '{name:$n, description:"managed by scm-upgrade.sh", enabled:true, job_type:"download-install-reboot",
     allow_downgrade:false, ha_orchestration:true, image_version:$v,
     download_starttime:{date:$dd, at:$dt}, install_starttime:{date:$id, at:$it},
     rules:[$n]}')"
