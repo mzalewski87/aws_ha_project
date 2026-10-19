@@ -235,6 +235,25 @@ covers the portal and every gateway name.
 - TLS `max-version` must be `tls1-2` — the keyword `max` is rejected.
 - A commit can be refused with "A commit is pending"; retry after the running one ends.
 - The commit job's result is the first **non-empty** `<result>` element.
+- The gateway's `dns-server` takes `<member>` children; `<primary>text</primary>` is rejected
+  ("has unexpected text").
+- **`build` is re-run whenever GP settings change and must not undo the certificate.** It keeps
+  `gp-le` when it already exists. (Earlier it re-pointed the TLS profile at the placeholder and
+  a trusted portal became self-signed again — `tls_verify` 0 → 18.)
+- **Moving Let's Encrypt from staging to production** needs a new ACME account (an account lives
+  on one server) and the old staging objects cannot even be refreshed against production
+  ("No account exists with the provided key"). `terraform state rm` the `acme_registration` and
+  `acme_certificate`, flip `custom_domain_letsencrypt_staging`, apply `module.custom_domain`,
+  then run `scm-gp-local.sh letsencrypt` on **each** unit.
+
+### DNS for clients (domain join over the VPN)
+The gateway pushes a DNS server and a DNS suffix to the GlobalProtect adapter:
+`DNS_SERVER_PRIMARY` (default the DC, `10.13.0.10`), optional `DNS_SERVER_SECONDARY`, and
+`DNS_SUFFIX` (default `panw.labs`, the root `dc_domain_name`). The AWS VPC resolver cannot see the
+AD zone, so a client must resolve through the domain controller to join the domain; the suffix
+lets short names resolve. Verified: after reconnecting, `ipconfig /all` shows the suffix and the
+DC as DNS server, and `nslookup <domain>` returns the DC. The traffic itself (DNS, Kerberos,
+LDAP, SMB, RPC to the DC) is not tested as an actual domain join.
 
 ## Guacamole (both paths)
 
