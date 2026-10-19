@@ -344,6 +344,24 @@ resource "scm_security_rule" "guacamole_rdp" {
   log_end     = true
 }
 
+resource "scm_security_rule" "panel_ldap" {
+  depends_on = [scm_zone.trust, scm_security_rule.guacamole_rdp]
+
+  count = length(var.panel_source_cidrs) > 0 && var.dc_private_ip != "" ? 1 : 0
+
+  name        = "panel-ldap-to-dc"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["trust"]
+  to          = ["trust"]
+  source      = var.panel_source_cidrs
+  destination = ["${var.dc_private_ip}/32"]
+  application = ["ldap"]
+  service     = ["application-default"]
+  action      = "allow"
+  log_end     = true
+}
+
 resource "scm_security_rule" "gp_users_to_internal" {
   name        = "gp-users-to-internal"
   folder      = local.folder
@@ -356,7 +374,7 @@ resource "scm_security_rule" "gp_users_to_internal" {
   service     = ["application-default"]
   action      = "allow"
   log_end     = true
-  depends_on  = [scm_security_rule.guacamole_rdp]
+  depends_on  = [scm_security_rule.panel_ldap]
 }
 
 resource "scm_security_rule" "spokes_outbound" {

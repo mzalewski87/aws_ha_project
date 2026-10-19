@@ -261,3 +261,14 @@ variable "guac_rdp_password" {
   default     = ""
   sensitive   = true
 }
+
+variable "create_panel" {
+  description = "Deploy the read-only admin panel (2 hosts in 2 AZs + ALB, mgmt VPC). Primary region only; needs create_dc."
+  type        = bool
+  default     = false
+}
+variable "panel_certificate_arn" {
+  description = "Issued ACM certificate ARN for the panel hostname (required when create_panel)."
+  type        = string
+  default     = ""
+}

@@ -148,3 +148,13 @@ output "guacamole_admin_secret_arn" {
   description = "Secrets Manager ARN with the Guacamole admin login (aws secretsmanager get-secret-value)."
   value       = module.region_a.guacamole_admin_secret_arn
 }
+
+output "panel_url" {
+  description = "Admin panel URL (null unless enable_panel)."
+  value       = local.panel_on ? "https://${local.panel_fqdn}/" : null
+}
+
+output "panel_secret_arn" {
+  description = "Secrets Manager ARN with the panel's read-only firewall admin login (used by scripts/panel-setup.sh)."
+  value       = module.region_a.panel_secret_arn
+}

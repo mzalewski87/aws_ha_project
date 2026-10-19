@@ -41,6 +41,10 @@ locals {
   create_guac  = var.create_guacamole && var.create_panorama && var.create_dc
   guac_subnets = local.create_guac ? { guac = { kind = "private", cidrs = [cidrsubnet(local.mg, 8, 20), cidrsubnet(local.mg, 8, 21)] } } : {}
 
+  # Admin panel hosts (one per AZ, private, NAT egress) in the mgmt VPC: /24s .30/.31.
+  create_panel  = var.create_panel && var.create_panorama && var.create_dc
+  panel_subnets = local.create_panel ? { panel = { kind = "private", cidrs = [cidrsubnet(local.mg, 8, 30), cidrsubnet(local.mg, 8, 31)] } } : {}
+
   # /24 subnets derived from each /16 (index = 3rd octet).
   security_subnets = {
     mgmt    = { kind = "private", cidrs = [cidrsubnet(local.sec, 8, 0), cidrsubnet(local.sec, 8, 1)] }
@@ -141,7 +145,7 @@ module "vpc_mgmt" {
   name_prefix = "${var.name_prefix}-mgmt"
   vpc_cidr    = local.mg
   azs         = var.azs
-  subnets     = merge(local.mgmt_subnets, local.guac_subnets)
+  subnets     = merge(local.mgmt_subnets, local.guac_subnets, local.panel_subnets)
   create_igw  = true
   create_nat  = true
   tags        = merge(var.tags, { Role = "management" })
@@ -192,6 +196,11 @@ module "transit_gateway" {
     # default route stays on NAT for image pulls/SSM.
     { for k, rt in module.vpc_mgmt.route_table_ids : "mgmt-guac-${k}" => { route_table_id = rt, destination_cidr_block = local.s2 }
     if local.create_guac && startswith(k, "guac-") },
+    # Panel -> firewall mgmt API (security VPC) and -> DC LDAP (spoke2, firewall-inspected).
+    { for k, rt in module.vpc_mgmt.route_table_ids : "mgmt-panel-sec-${k}" => { route_table_id = rt, destination_cidr_block = local.sec }
+    if local.create_panel && startswith(k, "panel-") },
+    { for k, rt in module.vpc_mgmt.route_table_ids : "mgmt-panel-${k}" => { route_table_id = rt, destination_cidr_block = local.s2 }
+    if local.create_panel && startswith(k, "panel-") },
     { for k, rt in module.vpc_security.route_table_ids : "sec-${k}" => { route_table_id = rt, destination_cidr_block = local.mg }
     if startswith(k, "mgmt-") },
     { for k, rt in module.vpc_security.route_table_ids : "sec-spoke2-${k}" => { route_table_id = rt, destination_cidr_block = local.s2 }
@@ -286,6 +295,27 @@ module "guacamole" {
   tags = var.tags
 
   # The DC and the TGW/FW path must exist before users can use the gateway.
+  depends_on = [module.routing]
+}
+
+# --- Admin panel (read-only; HA state + policy simulation) -------------------
+module "panel" {
+  count       = local.create_panel ? 1 : 0
+  source      = "../panel"
+  name_prefix = var.name_prefix
+
+  vpc_id          = module.vpc_mgmt.vpc_id
+  alb_subnet_ids  = module.vpc_mgmt.subnet_ids_by_role["public"]
+  host_subnet_ids = module.vpc_mgmt.subnet_ids_by_role["panel"]
+  certificate_arn = var.panel_certificate_arn
+  key_name        = local.key_name
+
+  ldap_host   = cidrhost(local.spoke2_subnets["workload"].cidrs[0], 10)
+  domain_name = var.dc_domain_name
+  fw_mgmt_ips = sort(values(module.firewall.mgmt_private_ips))
+
+  tags = var.tags
+
   depends_on = [module.routing]
 }
 

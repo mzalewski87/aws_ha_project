@@ -362,6 +362,40 @@ signatures target vulnerabilities that are not public, so **they cannot be trigg
 PANW documents no test method; any "simulation" can only show that the profile is active and
 read the logs for hits.
 
+### Admin panel (read-only test console)
+
+A small web panel for run C: sign in with an AD account, see each firewall's HA state and PAN-OS
+version, and ask a firewall **which rule a simulated session would hit** (`test security-policy-match`)
+— so Advanced IP Defense can be checked without sending a packet to a real malicious address. It can
+also load a sample address from one of PANW's predefined IP lists. It only **reads**: no IAM right to
+touch EC2, and the firewall account it uses is a `superreader`. Failover simulation is a later step.
+
+Design: two hosts in two AZs of the management VPC (outside the firewall data path it reports on)
+behind their own ALB, so a firewall failover, a host failure or an AZ failure does not take it down.
+Login is an NTLM bind to the domain controller plus membership of the AD group `panel-admins`;
+sessions are secure/HttpOnly/SameSite=Strict cookies, forms carry a CSRF token, failed logins are
+rate-limited, every action is a JSON line in the host's journal (`journalctl -u panel`).
+
+Enable and set up (needs `enable_custom_domain` and `enable_guacamole`-style DNS already in place):
+
+```bash
+# root terraform.tfvars:  enable_panel = true        (optional: panel_hostname = "panel")
+terraform apply                                       # ALB, ACM cert, 2 hosts, secret
+# phase2-scm-config:  applies the rule panel-ldap-to-dc (panel subnets -> DC, LDAP only)
+cd phase2-scm-config && terraform apply
+
+# one-off: the AD group and the read-only firewall admin (see the header of the script)
+AWS_REGION=eu-central-1 DC_INSTANCE_ID=... DOMAIN_ADMIN_USER=... DOMAIN_ADMIN_PASSWORD=... \
+  PANEL_USERS="gpuser" bash scripts/panel-setup.sh ad
+AWS_REGION=eu-central-1 JUMP_INSTANCE_ID=... PANEL_SECRET_ARN=$(terraform output -raw panel_secret_arn) \
+  FW_IPS="10.10.0.x 10.10.1.x" FW_ADMIN_USER=... FW_ADMIN_PASSWORD=... bash scripts/panel-setup.sh fw
+```
+
+Known limits: the AD bind is NTLM over plain LDAP (not LDAPS) because the DC has no machine
+certificate yet — the password is not sent in clear, but the exchange is not encrypted; the
+rule matches App-ID `ldap` (if the firewall classes the NTLM bind differently the login times out
+and the traffic log names the application).
+
 ## Teardown
 
 Reverse order, one workspace at a time:

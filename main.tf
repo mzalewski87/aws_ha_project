@@ -96,6 +96,8 @@ module "region_a" {
   create_dc                = true
   dc_domain_name           = var.dc_domain_name
   create_guacamole         = local.guac_on
+  create_panel             = local.panel_on
+  panel_certificate_arn    = local.panel_on ? aws_acm_certificate_validation.panel[0].certificate_arn : ""
   guac_certificate_arn     = local.guac_on ? aws_acm_certificate_validation.guac[0].certificate_arn : ""
   guac_rdp_username        = var.guac_rdp_username
   guac_rdp_password        = var.guac_rdp_password

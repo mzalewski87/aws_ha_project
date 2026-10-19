@@ -143,3 +143,9 @@ variable "ip_defense_inbound_edls" {
     "panw-highrisk-ip-list",
   ]
 }
+
+variable "panel_source_cidrs" {
+  description = "Panel host subnets (mgmt VPC) allowed to bind to the DC over LDAP for the admin-panel login. Empty = no rule (panel disabled)."
+  type        = list(string)
+  default     = ["10.11.30.0/23"]
+}

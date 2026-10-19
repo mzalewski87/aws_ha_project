@@ -142,3 +142,18 @@ output "guacamole_admin_secret_arn" {
   value       = local.create_guac ? module.guacamole[0].admin_secret_arn : null
   description = "Secrets Manager ARN holding the Guacamole admin credentials."
 }
+
+output "panel_alb_dns_name" {
+  value       = local.create_panel ? module.panel[0].alb_dns_name : null
+  description = "Admin panel ALB DNS name (alias target for the public hostname)."
+}
+
+output "panel_alb_zone_id" {
+  value       = local.create_panel ? module.panel[0].alb_zone_id : null
+  description = "Admin panel ALB hosted-zone id (Route53 alias)."
+}
+
+output "panel_secret_arn" {
+  value       = local.create_panel ? module.panel[0].secret_arn : null
+  description = "Secrets Manager ARN with the panel's read-only firewall admin password."
+}
