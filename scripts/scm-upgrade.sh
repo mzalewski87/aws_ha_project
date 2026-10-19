@@ -65,16 +65,36 @@ else
   scm_log "reusing upgrade rule $NAME"
 fi
 
-sched="$(jq -nc --arg n "$NAME" --arg v "$VERSION" --arg d "$START_DATE" --arg t "$START_AT" \
-  '{name:$n, description:"managed by scm-upgrade.sh", enabled:true, job_type:"install",
-    allow_downgrade:false, ha_orchestration:true, image_version:$v,
-    install_starttime:{date:$d, at:$t}, download_starttime:{date:$d, at:$t},
-    rules:[$n]}')"
-resp="$(scm_api POST "$BASE/software-upgrade-schedules" "$sched")" \
-  || scm_die "could not create the upgrade schedule (see the API error above)"
-sid="$(jq -r '.id // empty' <<<"$resp")"
-[ -n "$sid" ] || scm_die "schedule created but no id in the response: $resp"
-scm_log "schedule $sid: PAN-OS $VERSION on '$FOLDER', HA orchestrated, starts $START_DATE $START_AT UTC"
+# The OpenAPI does not say in which time zone start-time is read, and a time that is already
+# past for the server is rejected as "invalid date" (HTTP 500 CH_0001 — seen live when UTC was
+# sent to a tenant that is two hours ahead). So try the tenant's local zone first, then UTC, and
+# report which one the server took. Override with SCM_TZ.
+start_in() { # $1 = time zone -> "YYYY-MM-DD HH:MM", IN_MIN minutes from now in that zone
+  if TZ="$1" date -v+"${IN_MIN}"M +%F >/dev/null 2>&1; then
+    TZ="$1" date -v+"${IN_MIN}"M '+%F %H:%M'
+  else
+    TZ="$1" date -d "+${IN_MIN} minutes" '+%F %H:%M'
+  fi
+}
+sid=""; used_tz=""
+for tz in ${SCM_TZ:-Europe/Warsaw} UTC; do
+  read -r START_DATE START_AT <<<"$(start_in "$tz")"
+  sched="$(jq -nc --arg n "$NAME" --arg v "$VERSION" --arg d "$START_DATE" --arg t "$START_AT" \
+    '{name:$n, description:"managed by scm-upgrade.sh", enabled:true, job_type:"install",
+      allow_downgrade:false, ha_orchestration:true, image_version:$v,
+      install_starttime:{date:$d, at:$t}, download_starttime:{date:$d, at:$t},
+      rules:[$n]}')"
+  if resp="$(scm_api POST "$BASE/software-upgrade-schedules" "$sched" 2>/tmp/scm-upgrade-err)"; then
+    sid="$(jq -r '.id // empty' <<<"$resp")"; used_tz="$tz"; break
+  fi
+  if grep -q "invalid date" /tmp/scm-upgrade-err; then
+    scm_log "start time $START_DATE $START_AT in $tz was rejected as an invalid date — trying the next zone"
+  else
+    cat /tmp/scm-upgrade-err >&2; scm_die "could not create the upgrade schedule"
+  fi
+done
+[ -n "$sid" ] || scm_die "no accepted start time (tried ${SCM_TZ:-Europe/Warsaw} and UTC) — check the schedule schema"
+scm_log "schedule $sid: PAN-OS $VERSION on '$FOLDER', HA orchestrated, starts $START_DATE $START_AT ($used_tz)"
 
 # Poll the status of THIS schedule to a terminal state. The whole upgrade of a pair takes
 # roughly 30-60 minutes; the API drops out while a unit reboots, so tolerate failed polls.
