@@ -181,6 +181,31 @@ spoke VPCs reach the internet through the firewalls, and until they carry NAT an
 DC's SSM agent never comes online — the `create-ad-test-user` step then waits 20 minutes and
 fails, and a second run is needed.
 
+### The PKI chain is a separate step (`scripts/setup-pki.sh`)
+Terraform only creates the two CA *hosts*; the certificate chain is built by
+`scripts/setup-pki.sh` (SSM RunCommand only — it does not need Panorama or SCM) and
+`scripts/setup-machine-autoenroll.sh` (autoenrollment policy). Both ran live on path B. Run
+them after the DC is up and the `admin` account exists. Findings, each fixed in the scripts:
+
+- **The issuing CA host can end up outside the domain.** Its user-data retries the join for
+  ~20 minutes and gives up. If the DC is not ready or the join account does not exist yet (it is
+  created later), the CA stays in `WORKGROUP` and `Install-AdcsCertificationAuthority` fails with
+  the misleading *"The user name or password is incorrect"*. `setup-pki.sh` now checks
+  membership and joins the host itself (with a restart) before going on.
+- **Publishing the root into AD silently did nothing.** `certutil -dspublish` ran as SYSTEM
+  (a computer account) with its output sent to `Out-Null`; the *Certification Authorities*
+  container stayed empty while the step reported success, so no domain member trusted the root.
+  The script now publishes as a domain admin, prints certutil's exit codes and **verifies the
+  container**, failing if the root is missing. After it, the DC shows the root in its Trusted
+  Root store.
+- **A re-run needs the root powered on** (the script stops it at the end, by design); the
+  helper that wraps it starts it first.
+- **Known gap — the root's CRL is not in AD.** `certutil -dspublish -f root.crl` fails with
+  `ERROR_DS_REFERRAL` (`DC=UnavailableConfigDN`) because the root is a standalone, non-domain
+  CA. The chain builds and the issuing CA works, but its CDP entries name the offline root host,
+  so revocation checking of the root by clients is not covered. Not fixed yet.
+- The decryption setup (`setup-ssl-decrypt.sh`) uses Panorama and has **not** been ported to SCM.
+
 ## Phase B-GP — GlobalProtect
 
 **Live-verified (PAN-OS 12.2.3, ARE, Let's Encrypt):** a GlobalProtect client
