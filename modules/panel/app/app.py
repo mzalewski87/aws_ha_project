@@ -170,9 +170,9 @@ def login():
         limiter.fail(key)
         limiter.fail(f"{ip}|*")
         audit("login_failed", target=user)
-        error = "Wrong user name or password, or the account is not in the panel group."
+        error = "Sign-in failed."
     return page("""<form method=post class=card><input type=hidden name=csrf value="{{ csrf }}">
-<p>Sign in with your Active Directory account.</p>
+<p>Sign in</p>
 <label>User<br><input name=username autocomplete=username required></label><br>
 <label>Password<br><input name=password type=password autocomplete=current-password required></label><br>
 {% if error %}<p class=err>{{ error }}</p>{% endif %}<button>Sign in</button></form>""", error=error)
