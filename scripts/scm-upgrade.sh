@@ -95,23 +95,34 @@ sid="$(jq -r '.id // empty' <<<"$resp")"
 [ -n "$sid" ] || scm_die "schedule created but no id in the response: $resp"
 scm_log "schedule $sid: PAN-OS $VERSION on '$FOLDER', HA orchestrated; download $DL_DATE $DL_AT, install $IN_DATE $IN_AT ($TZN)"
 
-# Poll the status of THIS schedule to a terminal state. The whole upgrade of a pair takes
-# roughly 30-60 minutes; the API drops out while a unit reboots, so tolerate failed polls.
+# Wait for the result. GET /software-upgrade-status stayed an EMPTY LIST for the whole of a
+# real, successful upgrade on this tenant, so it cannot be the completion signal. What the
+# devices themselves report is: done = every firewall of the folder runs the target version,
+# is connected again, and the HA pair is healthy (one active + one passive). The status
+# endpoint is still read and printed when it does return something.
 deadline=$(( $(date +%s) + ${UPGRADE_TIMEOUT:-5400} ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
   st="$(scm_api GET "$BASE/software-upgrade-status" 2>/dev/null || true)"
   one="$(jq -c --arg s "$sid" '(if type=="array" then . else (.data // [.]) end) | map(select(.schedule_id == $s)) | first // empty' <<<"$st" 2>/dev/null || true)"
   if [ -n "$one" ]; then
-    overall="$(jq -r '.overall_status // ""' <<<"$one")"
-    scm_log "overall=${overall:-?}"
     jq -r '.devices[]? | "    \(.device_serial_no): " + ([.status.status_details // {} | to_entries[] | select(.value.state != null and .value.state != "") | "\(.key)=\(.value.state)"] | join(" "))' <<<"$one" >&2
-    case "$overall" in
-      completed) scm_log "upgrade finished"; exit 0 ;;
-      failed)    scm_die "the upgrade FAILED — inspect: GET $BASE/software-upgrade-status" ;;
-    esac
-  else
-    scm_log "no status for the schedule yet (it has not started, or the API is busy)"
+    [ "$(jq -r '.overall_status // ""' <<<"$one")" = "failed" ] && scm_die "the upgrade FAILED — inspect: GET $BASE/software-upgrade-status"
+  fi
+  devs="$(scm_api GET "/config/setup/v1/devices?limit=500" 2>/dev/null || true)"
+  summary="$(jq -r --arg f "$FOLDER" '[(.data // [])[] | select(.folder == $f) | "\(.name):\(.software_version):\(if .is_connected then "up" else "DOWN" end):\(.ha_state)"] | join("  ")' <<<"$devs" 2>/dev/null || true)"
+  scm_log "devices: ${summary:-<no answer — a unit is probably rebooting>}"
+  ok="$(jq -r --arg f "$FOLDER" --arg v "$VERSION" '
+      [(.data // [])[] | select(.folder == $f)] as $d
+      | ($d | length) > 0
+        and ($d | all(.software_version | startswith($v)))
+        and ($d | all(.is_connected == true))
+        and (($d | map(.ha_state) | sort) == ["active","passive"])' <<<"$devs" 2>/dev/null || echo false)"
+  if [ "$ok" = "true" ]; then
+    scm_log "upgrade finished: every firewall runs $VERSION, is connected and the pair is active/passive"
+    # The schedule stays enabled with a start time in the past; remove it so it cannot re-fire.
+    scm_api DELETE "$BASE/software-upgrade-schedules/$sid" >/dev/null 2>&1 && scm_log "schedule $sid removed"
+    exit 0
   fi
   sleep 60
 done
-scm_die "upgrade did not finish within ${UPGRADE_TIMEOUT:-5400}s"
+scm_die "upgrade did not finish within ${UPGRADE_TIMEOUT:-5400}s (devices: ${summary:-unknown})"

@@ -64,6 +64,29 @@ version recreates the firewalls, consumes BYOL activations again and gives them 
 serials: re-run `scm-onboard-fw.sh`, regenerate the per-device variables and the HA
 config, and delete the old (disconnected) devices from SCM.
 
+### Upgrading a running pair in place: `scripts/scm-upgrade.sh`
+Some features need a newer release than the Marketplace image (Frontier Virtual Patching needs
+12.2.4+, the newest image is 12.2.3). `scm-upgrade.sh <folder> <version>` upgrades the pair
+through an SCM *upgrade rule* (match: folder) and *schedule* (download, then install; HA
+orchestration on). It was run live, 12.2.3 -> 12.2.4, and the GlobalProtect portal still answered
+with its Let's Encrypt certificate afterwards (local configuration survives). Where the live API
+differs from the OpenAPI document — each cost a failed run:
+- **Dates are `YYYY/MM/DD`.** `YYYY-MM-DD` is rejected as `invalid date` for *every* value, which
+  looks like a time-zone or past-time problem and is neither.
+- **`job_type` is `download-install-reboot`.** `install` is "not an allowed keyword" (the OpenAPI
+  enum says it is valid). Omitting `job_type` is accepted but the schedule then did nothing at its
+  start time.
+- **Start times are UTC.** A time that was still ahead in UTC but already past in Warsaw was
+  accepted. Sending local time made a schedule wait two hours.
+- **`GET /software-upgrade-status` stays an empty list** during a real, successful upgrade, so it
+  is not usable as the completion signal. The script waits until every firewall of the folder
+  reports the target version, is connected again and the pair is active/passive.
+- Both firewalls came back within seconds of each other (their uptimes differed by ~3 s), so
+  plan for an outage of a few minutes rather than a rolling, traffic-preserving upgrade — the HA
+  orchestration did not visibly stagger the units.
+- The script refuses to start unless every firewall of the folder is connected, and removes its
+  own schedule when it finishes. A schedule left enabled keeps a start time in the past.
+
 ## What the `scm` provider cannot do (and what covers it)
 
 Verified against provider v1.0.13's schema and the pan.dev OpenAPI:
