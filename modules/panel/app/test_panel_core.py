@@ -66,6 +66,13 @@ class Parsers(unittest.TestCase):
                 '\t\t72.255.3.18\n\t\t147.1.17.88\n</result></response>')
         self.assertEqual(m.parse_edl_sample(text), {"total": 5500, "sample": ["72.255.3.18", "147.1.17.88"]})
 
+    def test_edl_sample_xml_api_form(self):
+        text = ('<response cmd="status" status="success"><result total-count="5500" count="100"><external-list>'
+                '<name>x</name><total-valid>5500</total-valid><total-ignored>0</total-ignored>'
+                '<valid-members><member>35.145.9.124</member><member>182.190.216.31</member>'
+                '<member>not-an-ip</member></valid-members></external-list></result></response>')
+        self.assertEqual(m.parse_edl_sample(text), {"total": 5500, "sample": ["35.145.9.124", "182.190.216.31"]})
+
     def test_errors(self):
         self.assertIsNone(m.api_error('<response status="success"/>'))
         self.assertIn("bad", m.api_error('<response status="error"><msg>bad</msg></response>'))

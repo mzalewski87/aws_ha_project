@@ -153,17 +153,30 @@ def parse_policy_match(text: str) -> list:
 
 
 def parse_edl_sample(text: str, limit: int = 5) -> dict:
-    """Entry count and a few sample addresses of a predefined list."""
-    body = "".join(_root(text).itertext())
-    total = re.search(r"Total valid entries\s*:\s*(\d+)", body)
+    """Entry count and a few sample addresses of a predefined list.
+
+    The XML API answers with <total-valid> and <member> elements (live-verified on 12.2.4);
+    the CLI-style text form ("Total valid entries : N", one address per line) is the fallback.
+    """
+    root = _root(text)
     ips = []
-    for line in body.splitlines():
-        line = line.strip()
+    for member in root.iter("member"):
         try:
-            ips.append(str(ipaddress.IPv4Address(line)))
+            ips.append(str(ipaddress.IPv4Address((member.text or "").strip())))
         except ipaddress.AddressValueError:
             continue
-    return {"total": int(total.group(1)) if total else None, "sample": ips[:limit]}
+    total = (root.findtext(".//total-valid") or "").strip()
+    if total.isdigit():
+        return {"total": int(total), "sample": ips[:limit]}
+    body = "".join(root.itertext())
+    legacy = re.search(r"Total valid entries\s*:\s*(\d+)", body)
+    if not ips:
+        for line in body.splitlines():
+            try:
+                ips.append(str(ipaddress.IPv4Address(line.strip())))
+            except ipaddress.AddressValueError:
+                continue
+    return {"total": int(legacy.group(1)) if legacy else None, "sample": ips[:limit]}
 
 
 class RateLimiter:
