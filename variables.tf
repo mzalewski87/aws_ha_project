@@ -406,7 +406,7 @@ variable "guac_rdp_password" {
 
 # --- Admin panel (Advanced IP Defense / FVP test console) --------------------
 variable "enable_panel" {
-  description = "Deploy the read-only admin panel (AD login, HA state, policy simulation) on its own ALB, in 2 AZs. Requires enable_custom_domain."
+  description = "Deploy the admin/test panel (AD login, HA topology, policy simulation; failover tests only with panel_enable_failover) on its own ALB, in 2 AZs. Path B only; requires enable_custom_domain."
   type        = bool
   default     = false
 }

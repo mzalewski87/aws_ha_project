@@ -110,8 +110,11 @@ that is not management (VPCs, TGW, HA pair, DC/PKI, GP, Guacamole) is shared.
   `device =` overrides.
 - **Routing: ARE.** Path B uses the Advanced Routing Engine (`scm_logical_router`,
   init-cfg `advance-routing:enable`), not path A's legacy virtual router. SCM's own
-  bootstrap push rejects interfaces that are not in a logical router. The AWS HA
-  plugin's failover with ARE is to be verified live.
+  bootstrap push rejects interfaces that are not in a logical router. HA failover with
+  ARE is verified live (EIP, floating IPs and TGW routes move) — **provided every
+  dataplane ENI whose routes must follow carries a floating secondary IP**: the AWS HA
+  plugin (secondary-IP mode) rewrites only routes that point at ENIs it moves IPs from,
+  so fw1's trust ENI has one too (see DEPLOYMENT-SCM.md, "HA failover").
 - **Scope honesty:** the `scm` provider has no HA resource and no HA2 interface
   mode, and SCM's public API has no NGFW GlobalProtect portal/gateway object.
   Those are covered by REST scripts (`scripts/scm-*.sh`, from the pan.dev OpenAPI)
@@ -119,7 +122,7 @@ that is not management (VPCs, TGW, HA pair, DC/PKI, GP, Guacamole) is shared.
 - **Firmware:** the newest PAN-OS present in both the Marketplace and SCM's list.
 - Prisma Access Agent was rejected: its API is Prisma Access (cloud) only and
   cannot replace GP on our own VM-Series.
-- Path B is **not yet live-verified**; see `docs/DEPLOYMENT-SCM.md`.
+- Path B is **live-verified in one region**; see `docs/DEPLOYMENT-SCM.md`.
 
 ### D12 — Browser RDP access to the DC via Apache Guacamole (both paths)
 A Docker-based Guacamole host in the mgmt VPC behind an internet-facing ALB (ACM

@@ -108,8 +108,11 @@ plane with path A (see ADR D11, `docs/DEPLOYMENT-SCM.md`).
   `scripts/scm-*.sh` (onboard, HA, push, verify); routing is ARE (`scm_logical_router`).
 - B-GP GlobalProtect: portal/gateway/tunnel node applied device-locally over the
   XML API (SCM has no NGFW object for them) — **built and verified live**.
-- Status: code validated, **not yet applied**; open [VERIFY LIVE] items are listed
-  in `docs/DEPLOYMENT-SCM.md`.
+- B-PKI, Guacamole, the admin/test panel (`modules/panel`), Advanced IP Defense (list
+  variant) and an in-place PAN-OS upgrade through SCM — **verified live**.
+- Status: **live-verified in one region** (incl. teardown + redeploy from code). Next:
+  Region B + Global Accelerator for path B (SCM per-device region overrides, cross-region
+  DC replication rule and multi-gateway portal are in place), region-failure test in the panel.
 
 ## Phase G — Guacamole RDP gateway (both paths)
 

@@ -127,3 +127,21 @@ enable_custom_domain = false
 # custom_domain_cert_mode           = "self_signed"       # or "letsencrypt"
 # custom_domain_letsencrypt_email   = "you@example.com"
 # custom_domain_letsencrypt_staging = true                # false = trusted cert
+
+# ============================================================================
+# Path B — Strata Cloud Manager instead of Panorama (docs/DEPLOYMENT-SCM.md)
+# ============================================================================
+# management_mode  = "scm"        # default "panorama" (path A)
+# vmseries_version = "12.2.3"     # path B: newest Marketplace image SCM lists (11.1.x fails SCM's bootstrap push)
+#   fw_registration_pin_id / _value above are REQUIRED in path B (the plan refuses to run without them).
+#   Activate the deployment profile for your SCM tenant BEFORE the firewalls boot.
+
+# --- Browser RDP to the DC (both paths; needs enable_custom_domain) ---
+# enable_guacamole   = true
+# guacamole_hostname = "rdp"      # -> https://rdp.<zone>/guacamole/
+
+# --- Admin/test panel (path B only; needs enable_custom_domain + the DC) ---
+# enable_panel            = true
+# panel_hostname          = "panel"                    # -> https://panel.<zone>/
+# panel_enable_failover   = false                      # true = panel operators may stop/start the firewalls
+# panel_alb_ingress_cidrs = ["0.0.0.0/0"]              # narrow to your addresses

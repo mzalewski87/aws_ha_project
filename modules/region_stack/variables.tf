@@ -263,7 +263,7 @@ variable "guac_rdp_password" {
 }
 
 variable "create_panel" {
-  description = "Deploy the read-only admin panel (2 hosts in 2 AZs + ALB, mgmt VPC). Primary region only; needs create_dc."
+  description = "Deploy the admin/test panel (2 hosts in 2 AZs + ALB, mgmt VPC). Primary region only; needs create_dc."
   type        = bool
   default     = false
 }

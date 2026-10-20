@@ -9,14 +9,26 @@ Windows Active Directory domain controller (with a replica DC in Region B); and
 **AWS Global Accelerator** anycast fronts the portal so clients survive a whole
 region outage.
 
-> **Two management paths from one codebase.** `management_mode = "panorama"`
-> (default, **path A**, live-verified) uses a self-hosted Panorama.
-> `management_mode = "scm"` (**path B**, not yet live-verified) uses **Strata
-> Cloud Manager** instead — no Panorama EC2. Both paths include an optional
-> **Apache Guacamole** browser-RDP gateway (TOTP-protected, firewall-inspected)
-> for access to the domain controller. See
-> [docs/DEPLOYMENT-SCM.md](docs/DEPLOYMENT-SCM.md) and decisions D11/D12 in
-> [docs/ARCHITECTURE-DECISION.md](docs/ARCHITECTURE-DECISION.md).
+## Choose a management path
+
+One codebase, two management planes, selected with `management_mode`:
+
+| | Path A — Panorama (default) | Path B — Strata Cloud Manager |
+|---|---|---|
+| Manager | self-hosted Panorama EC2 | SCM tenant (no EC2) |
+| Status | live-verified, **multi-region** (Region B + Global Accelerator) | live-verified in **one region**; Region B in progress |
+| Firewall PAN-OS | pinned, <= Panorama | newest SCM-supported (12.2.x), Advanced Routing Engine |
+| Extra prerequisites | Panorama serial, licence, OTP | SCM tenant, service account, deployment profile **activated for the tenant**, registration PIN |
+| Runbook | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | [docs/DEPLOYMENT-SCM.md](docs/DEPLOYMENT-SCM.md) (fresh account → working, step by step) |
+
+Both paths can add an **Apache Guacamole** browser-RDP gateway to the domain controller
+(TOTP, firewall-inspected, no RDP exposed). Path B adds:
+- an **admin/test panel**: AD login, live HA topology, an animated `test security-policy-match`
+  simulation, failover tests with measured takeover / portal-outage times;
+- **Advanced IP Defense** (PANW predefined IP lists, `alert` / `block`);
+- in-place PAN-OS upgrades through SCM.
+
+Design decisions D11/D12 are in [docs/ARCHITECTURE-DECISION.md](docs/ARCHITECTURE-DECISION.md).
 
 ## What it deploys
 
@@ -34,8 +46,8 @@ region outage.
   authentication.
 - **Windows AD domain controller** in a spoke, with a **replica DC in Region B**.
 - **CloudFront** in front of the Apache app.
-- **Single Panorama** managing all firewalls in all regions over cross-region
-  TGW peering.
+- **Single Panorama** (path A) managing all firewalls in all regions over cross-region
+  TGW peering — or **Strata Cloud Manager** (path B), one folder for the pair.
 - **SSM Session Manager** (via a jump host) for the `panos` provider and XML-API
   automation — no bastion.
 - **Optional add-ons:** HTTP→HTTPS redirect ALB, custom domain (Route53
@@ -166,7 +178,7 @@ Open it in a full tab; it is a canvas app and uses the width. Runs locally too
 - **[docs/PREREQUISITES.md](docs/PREREQUISITES.md)** — install tools + log in to AWS from the CLI (do this first).
 - **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** — every parameter: which file, required?, where to source it.
 - **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** — the full deploy runbook (phases, verification, tests, teardown, troubleshooting).
-- **[docs/DEPLOYMENT-SCM.md](docs/DEPLOYMENT-SCM.md)** — path B runbook (Strata Cloud Manager instead of Panorama) + Guacamole.
+- **[docs/DEPLOYMENT-SCM.md](docs/DEPLOYMENT-SCM.md)** — path B runbook (Strata Cloud Manager instead of Panorama): step-by-step procedure, verification, HA notes, Guacamole, Advanced IP Defense, the admin/test panel, teardown, troubleshooting.
 - **[docs/ACCESS.md](docs/ACCESS.md)** — 🔌 how to connect: RDP to the Windows DC, the Panorama GUI/API, and firewall CLI (all via SSM, no bastion).
 - **[docs/ARCHITECTURE-DECISION.md](docs/ARCHITECTURE-DECISION.md)** — the load-bearing design decisions.
 - **[docs/ROADMAP.md](docs/ROADMAP.md)** — phased build order.

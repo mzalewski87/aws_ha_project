@@ -22,9 +22,10 @@
 #   PRIMARY_HA2_IP  SECONDARY_HA2_IP        HA2 ENI IPs (root output fw_ha2_private_ips)
 #   [HA2_NETMASK=255.255.255.0] [GROUP_ID=1] [HA2_PORT=ethernet1/1]
 #
-# Run AFTER the folder config is pushed (the HA2 interface is created by this
-# call, the dataplane interfaces by phase2-scm-config) and BEFORE relying on
-# failover. Verify with: scripts/scm-verify.sh (ha_state / ha_peer_state).
+# ORDER (as run live): phase2-scm-config applied (folder config stored in SCM) -> this script
+# (stores the HA configs) -> scripts/scm-push.sh (ONE push carries both to the firewalls) ->
+# scripts/scm-verify.sh (expect one active, one passive). Serials: phase2-scm-config/
+# fw_devices.auto.tfvars.json, e.g. jq -r '.fw_devices | keys[]' on that file.
 ###############################################################################
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

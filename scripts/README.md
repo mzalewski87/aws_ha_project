@@ -27,5 +27,11 @@ hand at a specific phase.
 | `scm-ha.sh` | Path B — configure native Active/Passive HA from SCM (`/ha-configurations`); replaces `configure-ha.sh`. |
 | `scm-push.sh` | Path B — push the folder's candidate config and wait for the job; a non-OK job fails the script. |
 | `scm-verify.sh` | Path B — read-only report: devices, HA state, security-rule order. |
+| `scm-gp-local.sh` | Path B — GlobalProtect portal + gateway (+ tunnel node, pool, DNS, Let's Encrypt cert) in the device-LOCAL config, `admin`/`build`/`letsencrypt`/`cleanup`; run on EACH unit (local config does not replicate between SCM-managed peers). |
+| `scm-upgrade.sh` | Path B — in-place PAN-OS upgrade of a folder through an SCM upgrade rule + schedule; waits until every unit runs the version and every pair is active/passive, always removes its schedule. |
+| `scm-folder-release.sh` | Path B teardown — move every device out of the folder so `phase2-scm-config` can be destroyed. |
+| `panel-setup.sh` | Path B panel — `ad`: AD groups `panel-admins` / `panel-operators` (+ members) on the DC via SSM; `fw`: restricted firewall admin `panelro` (role `panel-ro`, XML-API op commands only) on each unit. |
+| `setup-pki.sh` | Two-tier AD CS PKI (offline root + enterprise issuing CA) over SSM RunCommand; publishes the root to AD and verifies it. |
+| `setup-machine-autoenroll.sh` | Machine-certificate autoenrollment policy in the domain (GP pre-logon prerequisite). |
 | `create-ad-test-user.sh` | Create a test AD user after the DC forest is promoted (invoked by Terraform). |
 | `fix-drift.sh` | Detect drift between Terraform state and the live Panorama configuration. |

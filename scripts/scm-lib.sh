@@ -141,6 +141,9 @@ scm_wait_children() {
 # hostname from DHCP (dhcp-accept-server-hostname=yes), so the init-cfg hostname
 # is overridden and shows up as e.g. ip-10-10-0-11, never "fw1".
 scm_device_by_hostname() {
+  # KEY may also be the management IP: then only a CONNECTED device matches, so a stale entry
+  # of a replaced firewall (same IP, disconnected) is never picked.
   scm_api GET "/config/setup/v1/devices?limit=500" \
-    | jq -c --arg h "$1" '(.data // []) | map(select(.name == $h or .hostname == $h)) | first // empty'
+    | jq -c --arg h "$1" '(.data // []) | map(select(.name == $h or .hostname == $h
+        or (.ip_address == $h and .is_connected == true))) | first // empty'
 }
