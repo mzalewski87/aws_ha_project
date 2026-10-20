@@ -368,7 +368,7 @@ A small web panel for run C: sign in with an AD account, see each firewall's HA 
 version, and ask a firewall **which rule a simulated session would hit** (`test security-policy-match`)
 — so Advanced IP Defense can be checked without sending a packet to a real malicious address. It can
 also load a sample address from one of PANW's predefined IP lists. It only **reads**: no IAM right to
-touch EC2, and the firewall account it uses is a `superreader`. Failover simulation is a later step.
+touch EC2, and the firewall account it uses has a custom role (`panel-ro`: XML-API operational commands only, no configuration access, commit, export or import). A plain `superreader` is not enough: it cannot run `test` / `request` / `show` through the XML API ("User not authorized to perform this operation"). Failover simulation is a later step.
 
 Design: two hosts in two AZs of the management VPC (outside the firewall data path it reports on)
 behind their own ALB, so a firewall failover, a host failure or an AZ failure does not take it down.

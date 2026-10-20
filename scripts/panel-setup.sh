@@ -4,7 +4,8 @@
 #
 #   ad   create the AD group the panel requires (default `panel-admins`) and add the
 #        given users to it. Runs on the domain controller through SSM RunCommand.
-#   fw   create the READ-ONLY firewall admin the panel uses (superreader, password taken
+#   fw   create the restricted firewall admin the panel uses (custom role panel-ro: op commands only,
+#        no config access/commit; password taken
 #        from the panel's Secrets Manager secret) on each firewall, then commit.
 #        Uses the XML API through the SSM jump host.
 #
@@ -85,9 +86,19 @@ fw_step() {
           --data-urlencode "cmd=<request><password-hash><password>${pw}</password></password-hash></request>" \
           | sed -E 's/.*<phash>([^<]+)<\/phash>.*/\1/')"
     [ -n "$hash" ] && [[ "$hash" != *"<"* ]] || die "password hash request failed on $ip"
+    # Role: XML-API operational commands ON (status, `test security-policy-match`, list
+    # samples) but configuration reads/writes, commit, export and import OFF. `superreader`
+    # is not enough: it cannot run those op commands through the XML API.
+    res="$(fw_api "$lp" --data-urlencode type=config --data-urlencode action=set --data-urlencode "key=$key" \
+          --data-urlencode "xpath=/config/shared/admin-role/entry[@name='panel-ro']" \
+          --data-urlencode "element=<role><device><cli>superreader</cli><webui><dashboard>disable</dashboard></webui><xmlapi><report>disable</report><log>disable</log><config>disable</config><op>enable</op><commit>disable</commit><export>disable</export><import>disable</import></xmlapi><restapi><device><objects>disable</objects></device></restapi></device></role>")"
+    grep -q 'status="success"' <<<"$res" || die "creating the panel-ro role on $ip failed: $res"
+    # Re-create the user from scratch so a previous superreader assignment cannot linger.
+    fw_api "$lp" --data-urlencode type=config --data-urlencode action=delete --data-urlencode "key=$key" \
+          --data-urlencode "xpath=/config/mgt-config/users/entry[@name='${user}']" >/dev/null || true
     res="$(fw_api "$lp" --data-urlencode type=config --data-urlencode action=set --data-urlencode "key=$key" \
           --data-urlencode "xpath=/config/mgt-config/users/entry[@name='${user}']" \
-          --data-urlencode "element=<phash>${hash}</phash><permissions><role-based><superreader>yes</superreader></role-based></permissions>")"
+          --data-urlencode "element=<phash>${hash}</phash><permissions><role-based><custom><profile>panel-ro</profile></custom></role-based></permissions>")"
     grep -q 'status="success"' <<<"$res" || die "creating $user on $ip failed: $res"
     job="$(fw_api "$lp" --data-urlencode type=commit --data-urlencode "key=$key" --data-urlencode "cmd=<commit></commit>" \
           | sed -nE 's/.*<job>([0-9]+)<\/job>.*/\1/p')"

@@ -47,7 +47,7 @@ variable "fw_mgmt_ips" {
   type        = list(string)
 }
 variable "fw_readonly_user" {
-  description = "Read-only (superreader) firewall admin the panel uses."
+  description = "Restricted firewall admin the panel uses (custom role panel-ro, created by scripts/panel-setup.sh)."
   type        = string
   default     = "panelro"
 }
