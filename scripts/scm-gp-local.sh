@@ -172,9 +172,17 @@ build)
   api_login
   FAILED=0
   setcfg() {  # xpath element label
-    local r
-    r="$(curl -sk -m 120 "$BASE" --data-urlencode type=config --data-urlencode action=set \
-         --data-urlencode "xpath=$1" --data-urlencode "element=$2" --data-urlencode "key=$KEY")"
+    local r i
+    # "A commit is pending" = a job holds the config (live: on an active unit, every content
+    # download (e.g. Frontier Virtual Patching, every few minutes) triggers an HA-Sync that
+    # takes ~2 min). Wait it out instead of failing the whole build.
+    for i in $(seq 1 20); do
+      r="$(curl -sk -m 120 "$BASE" --data-urlencode type=config --data-urlencode action=set \
+           --data-urlencode "xpath=$1" --data-urlencode "element=$2" --data-urlencode "key=$KEY")"
+      grep -q "A commit is pending" <<<"$r" || break
+      [ "$i" = 1 ] && scm_log "WAIT  $3: a commit/HA-sync job is running, retrying every 15 s"
+      sleep 15
+    done
     if ok "$r"; then scm_log "OK    $3"; else scm_log "FAIL  $3: $r"; FAILED=1; fi
   }
   # 1) Bootstrap certificate. A self-signed cert with identical subject/issuer MUST be a CA,
