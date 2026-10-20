@@ -50,8 +50,25 @@ a logical router (`Interface ethernet1/2 has no logical-router configured`) — 
 is exactly what a legacy virtual router created over REST produced. The router is a
 Terraform resource (`scm_logical_router`: one `default` VRF with the four interfaces
 and two static routes whose next hops are the folder variables), and init-cfg turns
-ARE on from the first boot. **[VERIFY LIVE]** the AWS HA plugin's route/EIP failover
-with ARE (path A's failover was verified only with the legacy virtual router).
+ARE on from the first boot.
+
+**HA failover moves the routes only for ENIs that carry a floating secondary IP (found
+live).** The PAN-OS AWS HA plugin (secondary-IP mode, PAN-OS 12.2.4, plugin 6.2.1)
+moves the secondary IPs of the failed unit's dataplane ENIs to the peer and rewrites
+the route-table entries that point at those ENIs. With the floating IP on the untrust
+ENI only, the EIP followed every failover but the TGW inspection routes (`0.0.0.0/0`
+→ trust ENI) stayed on the now-passive unit: GP portal up, but every east-west /
+spoke flow black-holed (LDAP for the panel login, RDP via Guacamole, GP users to the
+DC, spoke egress). The admin panel's live topology made it visible (EIP on fw2,
+routes on fw1). Fix: fw1's trust ENI gets a floating secondary IP as well
+(`<trust subnet>.100`, same host offset as untrust; PANW: "add a secondary IP
+address to your dataplane interfaces on the first (to be active) HA peer"), and the
+`aws_route` to the trust ENI ignores `network_interface_id` (runtime-owned by the
+plugin; Terraform used to point it back at fw1). An existing deployment needs the
+secondary IP added once to the trust ENI the routes point at
+(`aws ec2 assign-private-ip-addresses ... --allow-reassignment`), because
+`private_ips` is in `ignore_changes`. Verify after a failover with the panel's
+topology, or `describe-route-tables` on the security VPC TGW-attachment tables.
 
 ## Firmware
 

@@ -20,6 +20,13 @@ resource "aws_route" "tgwattach_to_fw" {
   route_table_id         = each.value
   destination_cidr_block = "0.0.0.0/0"
   network_interface_id   = var.active_trust_eni_id
+
+  # Runtime-owned after the first failover: the PAN-OS AWS HA plugin repoints this route at
+  # the active unit's trust ENI (ReplaceRoute). Terraform must not put it back on fw1, or it
+  # black-holes all spoke/east-west traffic whenever fw2 is active.
+  lifecycle {
+    ignore_changes = [network_interface_id]
+  }
 }
 
 # FW return path: the trust ENI sends spoke/mgmt-bound traffic back to the TGW.

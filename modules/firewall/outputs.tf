@@ -49,6 +49,11 @@ output "public_eip_allocation_id" {
   value       = aws_eip.fw_public.id
 }
 
+output "trust_floating_ip" {
+  description = "Trust floating secondary IP: it moves with the active unit, and with it the HA plugin moves the inspection routes."
+  value       = local.trust_floating_ip
+}
+
 output "floating_ip" {
   description = "Untrust floating private IP carrying the public EIP (moves on failover)."
   value       = local.floating_ip

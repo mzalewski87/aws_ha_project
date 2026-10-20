@@ -38,7 +38,15 @@ locals {
     untrust = { subnet_id = var.untrust_subnet_id, subnet_cidr = var.untrust_subnet_cidr, sg = var.untrust_sg_id, device_index = 3, dataplane = true }
   }
 
-  # fw x nic -> ENI definition. fw1's untrust ENI gets the extra floating IP.
+  # fw x nic -> ENI definition. fw1's untrust AND trust ENIs get an extra floating
+  # secondary IP. The PAN-OS AWS HA plugin (secondary-IP mode) moves the secondary IPs of
+  # the failed unit's dataplane ENIs to the peer and, with them, rewrites the route-table
+  # entries that point at those ENIs. An ENI without a secondary IP is left alone: with
+  # the floating IP on untrust only (as before), the EIP followed every failover but the
+  # TGW inspection routes kept pointing at the now-passive unit's trust ENI, black-holing
+  # all east-west / spoke traffic. Seen live in path B (PAN-OS 12.2.4, plugin 6.2.1).
+  # The PANW guide asks for this too: "Add a secondary IP address to your dataplane
+  # interfaces on the first (to be active) HA peer".
   fw_nics = {
     for combo in setproduct(local.fw_names, keys(local.nic_types)) :
     "${combo[0]}-${combo[1]}" => {
@@ -48,7 +56,7 @@ locals {
       sg           = local.nic_types[combo[1]].sg
       device_index = local.nic_types[combo[1]].device_index
       dataplane    = local.nic_types[combo[1]].dataplane
-      private_ips = (combo[1] == "untrust" && combo[0] == "fw1") ? [
+      private_ips = (contains(["untrust", "trust"], combo[1]) && combo[0] == "fw1") ? [
         cidrhost(local.nic_types[combo[1]].subnet_cidr, var.fw_host_offsets[combo[0]]),
         cidrhost(local.nic_types[combo[1]].subnet_cidr, var.floating_host_offset),
         ] : [
@@ -57,7 +65,8 @@ locals {
     }
   }
 
-  floating_ip = cidrhost(var.untrust_subnet_cidr, var.floating_host_offset)
+  floating_ip       = cidrhost(var.untrust_subnet_cidr, var.floating_host_offset)
+  trust_floating_ip = cidrhost(var.trust_subnet_cidr, var.floating_host_offset)
 }
 
 data "aws_ami" "vmseries" {
@@ -87,7 +96,7 @@ resource "aws_network_interface" "fw" {
   source_dest_check = each.value.dataplane ? false : true
   tags              = merge(var.tags, { Name = "${var.name_prefix}-${each.value.fw}-${each.value.nic_type}" })
 
-  # The untrust ENIs carry the floating IP as a SECONDARY address, and the
+  # The untrust and trust ENIs carry a floating IP as a SECONDARY address, and the
   # PAN-OS AWS HA plugin moves it between the pair on failover
   # (AssignPrivateIpAddresses). That makes `private_ips` runtime-owned: after a
   # failover Terraform wants to put the floating IP back on fw1, fighting the
