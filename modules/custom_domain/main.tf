@@ -32,8 +32,11 @@ resource "aws_route53_zone" "sub" {
 }
 
 # Portal record -> Global Accelerator anycast IPs (or a single portal EIP).
+# count must not depend on the list's LENGTH: with Global Accelerator the IPs are only known
+# after apply, and "Invalid count argument" then blocked the first apply that enables it
+# (seen live). The root always passes at least one address when the domain is on.
 resource "aws_route53_record" "portal" {
-  count   = local.on && length(var.portal_target_ips) > 0 ? 1 : 0
+  count   = local.on ? 1 : 0
   zone_id = aws_route53_zone.sub[0].zone_id
   name    = local.portal_fqdn
   type    = "A"
