@@ -99,9 +99,15 @@ cli_file() {  # $1 = file of CLI commands; runs them over SSH (admin/cleanup onl
   # it (exit 142) even when everything worked — judge success by the firewall's own message,
   # not by the exit code (the exit code made every successful run look like a failure).
   local out
-  out="$(perl -e 'alarm shift; exec @ARGV' 240 ssh -tt "${opts[@]}" admin@127.0.0.1 < "$1" 2>&1 | tr -d '\r' || true)"
+  # 480 s: a commit on a freshly onboarded unit (right after an SCM push / HA sync) took over
+  # 3 minutes live, and a 240 s limit cut the session while the commit was still running.
+  out="$(perl -e 'alarm shift; exec @ARGV' 480 ssh -tt "${opts[@]}" admin@127.0.0.1 < "$1" 2>&1 | tr -d '\r' || true)"
   grep -E "committed|Commit|rror|nvalid" <<<"$out" | head -8 || true
-  grep -q "Configuration committed successfully" <<<"$out" || scm_die "no 'Configuration committed successfully' from $FW_IP"
+  if ! grep -q "Configuration committed successfully" <<<"$out"; then
+    job="$(sed -nE 's/.*Commit job ([0-9]+) is in progress.*/\1/p' <<<"$out" | head -1)"
+    [ -n "$job" ] && scm_die "commit job $job on $FW_IP was still running when the session ended; check it ('show jobs id $job') before re-running"
+    scm_die "no 'Configuration committed successfully' from $FW_IP"
+  fi
 }
 
 api_login() {
