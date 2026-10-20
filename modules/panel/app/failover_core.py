@@ -5,6 +5,7 @@ unit-tested with a fake cluster:
 
   api  : ha(unit) -> {"state","peer_state","config_sync"}   (raises when unreachable)
          suspend(unit) / functional(unit)                    (PAN-OS HA suspend / restore)
+         sync(unit)                                          (sync-to-remote of the running config)
   ec2  : state(unit) -> "running"|"stopped"|...  stop(unit)  start(unit)
   probe: ProbeStats fed by a background GlobalProtect portal check
 
@@ -127,14 +128,51 @@ def find_roles(ctx):
     if len(active) != 1 or len(passive) != 1:
         raise Aborted("the pair is not in a clean active/passive state: " +
                       ", ".join(f"{u}={(h or {}).get('state', 'unreachable')}" for u, h in states.items()))
-    if (states[passive[0]] or {}).get("config_sync") != "synchronized":
-        raise Aborted("the passive unit is not config-synchronized; refusing to start")
     return active[0], passive[0]
+
+
+def ensure_synced(ctx, active, passive, timeout=240):
+    """Check running-config sync of the pair; when it is off, ask the active unit to push it.
+
+    Live-seen: the pair can report 'not synchronized' for a while after a commit (for example a
+    push from SCM) and then recover by itself. So wait briefly, then force a sync from the active
+    unit, then wait again. Abort only if it still has not converged.
+    """
+    def synced():
+        a, p = ctx.ha(active), ctx.ha(passive)
+        return bool(a and p and a.get("config_sync") == "synchronized" and p.get("config_sync") == "synchronized")
+
+    if synced():
+        ctx.job.log("running configuration is synchronized on both units")
+        return
+    ctx.job.log("running configuration is NOT synchronized: giving it 20s, then forcing a sync", "warn")
+    try:
+        ctx.wait(synced, "configuration synchronized on its own", 20, 5)
+        return
+    except Aborted:
+        pass
+    ctx.job.log(f"asking {active} to sync its running configuration to {passive} (sync-to-remote)")
+    ctx.api.sync(active)
+    try:
+        ctx.wait(synced, "configuration synchronized after the forced sync", timeout, 5)
+    except Aborted:
+        a, p = ctx.ha(active) or {}, ctx.ha(passive) or {}
+        raise Aborted("the pair stays out of sync after a forced sync "
+                      f"({active}: {a.get('config_sync')}, {passive}: {p.get('config_sync')}). "
+                      "The two units have diverging local configuration: compare them and commit on the active unit.")
+
+
+def sync_check(ctx):
+    """Check config sync of the pair and repair it from the active unit when needed."""
+    x, y = find_roles(ctx)
+    ctx.job.log(f"pair roles: {x} active, {y} passive")
+    ensure_synced(ctx, x, y)
 
 
 def soft_failover(ctx):
     """Suspend the active unit (the PAN-OS HA way), watch the peer take over, then restore."""
     x, y = find_roles(ctx)
+    ensure_synced(ctx, x, y)
     ctx.job.log(f"pair is healthy: {x} active, {y} passive, synchronized")
     ctx.job.log(f"suspending {x} (request high-availability state suspend)")
     ctx.api.suspend(x)
@@ -151,6 +189,7 @@ def soft_failover(ctx):
 def hard_failover(ctx):
     """Power the active unit off at the EC2 level, watch the takeover, then bring it back."""
     x, y = find_roles(ctx)
+    ensure_synced(ctx, x, y)
     for u in (x, y):
         st = ctx.ec2.state(u)
         if st != "running":
@@ -192,6 +231,7 @@ def recover(ctx):
 
 
 SCENARIOS = {
+    "sync": ("Check and repair configuration sync (forces a sync from the active unit if needed)", sync_check),
     "soft": ("HA failover (suspend the active firewall, then restore)", soft_failover),
     "hard": ("Hard failover (stop the active firewall's EC2 instance, then start it)", hard_failover),
     "recover": ("Recover the pair (start stopped firewalls, clear suspended state)", recover),

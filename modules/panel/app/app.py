@@ -345,6 +345,9 @@ class HttpApi:
     def functional(self, unit):
         fw_op(self._ip(unit), core.HA_FUNCTIONAL_CMD)
 
+    def sync(self, unit):
+        fw_op(self._ip(unit), core.HA_SYNC_CMD)
+
 
 class Ec2Api:
     """Start/stop of the two firewall instances only (the IAM role allows nothing else)."""

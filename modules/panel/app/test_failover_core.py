@@ -16,11 +16,12 @@ class Fake:
     def __init__(self):
         self.t = 0.0
         self.ha_state = {"fw1": "active", "fw2": "passive"}
-        self.sync = {"fw1": "synchronized", "fw2": "synchronized"}
+        self.cfg_sync = {"fw1": "synchronized", "fw2": "synchronized"}
         self.reachable = {"fw1": True, "fw2": True}
         self.ec2_state = {"fw1": "running", "fw2": "running"}
         self.pending = []
         self.calls = []
+        self.repairable = True
 
     def at(self, delay, fn):
         self.pending.append((self.t + delay, fn))
@@ -40,13 +41,18 @@ class Fake:
         self.clock()
         if not self.reachable[u]:
             raise OSError("unreachable")
-        return {"state": self.ha_state[u], "config_sync": self.sync[u], "peer_state": "x"}
+        return {"state": self.ha_state[u], "config_sync": self.cfg_sync[u], "peer_state": "x"}
 
     def suspend(self, u):
         self.calls.append(("suspend", u))
         other = "fw2" if u == "fw1" else "fw1"
         self.ha_state[u] = "suspended"
         self.at(15, lambda: self.ha_state.__setitem__(other, "active"))
+
+    def sync(self, u):
+        self.calls.append(("sync", u))
+        if self.repairable:
+            self.at(25, lambda: self.cfg_sync.update({"fw1": "synchronized", "fw2": "synchronized"}))
 
     def functional(self, u):
         self.calls.append(("functional", u))
@@ -103,12 +109,39 @@ class Scenarios(unittest.TestCase):
         self.assertEqual(ctx.job.status, "failed")
         self.assertEqual(f.calls, [])  # nothing was touched
 
-    def test_refuses_when_passive_not_synchronized(self):
+    def test_out_of_sync_pair_is_repaired_before_the_test(self):
         f = Fake()
-        f.sync["fw2"] = "out of sync"
+        f.cfg_sync["fw2"] = "not synchronized"
         ctx = make(f)
         fc.run_job(ctx, fc.hard_failover)
+        self.assertEqual(ctx.job.status, "done", ctx.job.steps)
+        self.assertEqual(f.calls[0], ("sync", "fw1"))  # the ACTIVE unit pushes its config first
+
+    def test_stays_out_of_sync_means_abort_before_touching_anything(self):
+        f = Fake()
+        f.cfg_sync["fw2"] = "not synchronized"
+        f.repairable = False
+        ctx = make(f)
+        fc.run_job(ctx, fc.soft_failover)
         self.assertEqual(ctx.job.status, "failed")
+        self.assertEqual(f.calls, [("sync", "fw1")])  # no suspend/stop happened
+        self.assertIn("diverging", ctx.job.steps[-2]["msg"])
+
+    def test_sync_scenario_repairs_on_demand(self):
+        f = Fake()
+        f.cfg_sync["fw1"] = "not synchronized"
+        ctx = make(f)
+        fc.run_job(ctx, fc.sync_check)
+        self.assertEqual(ctx.job.status, "done", ctx.job.steps)
+        self.assertEqual(f.cfg_sync, {"fw1": "synchronized", "fw2": "synchronized"})
+
+    def test_sync_that_heals_by_itself_is_not_forced(self):
+        f = Fake()
+        f.cfg_sync["fw2"] = "not synchronized"
+        f.at(10, lambda: f.cfg_sync.update({"fw1": "synchronized", "fw2": "synchronized"}))
+        ctx = make(f)
+        fc.run_job(ctx, fc.sync_check)
+        self.assertEqual(ctx.job.status, "done", ctx.job.steps)
         self.assertEqual(f.calls, [])
 
     def test_timeout_fails_the_job_instead_of_hanging(self):

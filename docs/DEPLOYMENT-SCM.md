@@ -397,7 +397,14 @@ is in `panel-operators` (and `panel-admins`) can run
   peer to take over, then `functional` again;
 - **hard failover**: stop the active unit's EC2 instance, wait for the takeover, start it again and
   wait until it is passive and synchronized;
-- **recover**: start a stopped firewall / clear a suspended state after an interrupted run.
+- **recover**: start a stopped firewall / clear a suspended state after an interrupted run;
+- **sync**: check running-configuration sync and repair it. Every failover test does the same
+  check first: if the pair reports `not synchronized` it waits 20s (the state is often transient
+  after a commit or an SCM push), then has the active unit push its configuration
+  (`request high-availability sync-to-remote running-config`) and waits up to 4 minutes; only if
+  that does not converge does it abort, before touching anything, and says the units have
+  diverging local configuration. (Seen live: both units reported `not synchronized` for a while
+  after a push, then recovered; HA1/HA2 were up throughout.)
 
 While a test runs, the panel probes the GlobalProtect portal every second and shows the takeover
 time and how long the portal was unreachable. The panel itself runs in the management VPC in two
