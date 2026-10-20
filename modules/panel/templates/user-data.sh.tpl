@@ -15,7 +15,7 @@ for f in $(jq -r 'keys[]' /opt/panel/bundle.json); do
 done
 chmod -R a+rX /opt/panel
 python3 -m venv /opt/panel/venv
-/opt/panel/venv/bin/pip install --quiet flask gunicorn requests ldap3 pycryptodome boto3  # pycryptodome: MD4 for NTLM (OpenSSL 3 dropped it)
+/opt/panel/venv/bin/pip install --quiet "flask>=3.1,<3.2" "gunicorn>=23,<24" "requests>=2.32,<3" "ldap3>=2.9,<2.10" "pycryptodome>=3.20,<4" "boto3>=1.34,<2"  # pycryptodome: MD4 for NTLM (OpenSSL 3 dropped it)
 
 SECRET=$(aws secretsmanager get-secret-value --region "${region}" --secret-id "${secret_id}" --query SecretString --output text)
 umask 077

@@ -12,8 +12,8 @@
 # What the `scm` provider (v1.0.x) CANNOT express, and how path B covers it
 # (all verified against the provider schema + pan.dev OpenAPI, 2026-10):
 #   * HA + the HA2 interface    -> scripts/scm-ha.sh (REST /ha-configurations)
-#   * GP tunnel settings        -> scripts/scm-gp-tunnel-settings.sh (REST)
-#   * GP portal + gateway       -> device-local XML API (SCM has no NGFW
+#   * GP portal + gateway (and their tunnel node, client IP pool, DNS)
+#                               -> device-local XML API on EACH unit (SCM has no NGFW
 #                                  portal/gateway object) — scripts/scm-gp-local.sh
 # Rule ORDER: every rule is its own resource and Terraform creates them in
 # parallel, so the allow rules are chained with depends_on and deny-all lives in
@@ -60,6 +60,29 @@ resource "scm_variable" "device_trust_ip" {
   value  = each.value.trust_ip
   device = each.key
   # The firewall must already live in the folder (scripts/scm-onboard-fw.sh).
+  depends_on = [scm_variable.folder]
+}
+
+# Region-specific overrides (only for devices that set them, i.e. a pair outside Region A).
+locals {
+  device_region_vars = merge([
+    for serial, d in var.fw_devices : {
+      for name, value in {
+        "$untrust_floating" = d.untrust_floating
+        "$trust_gw"         = d.trust_gw
+        "$untrust_gw"       = d.untrust_gw
+      } : "${serial}|${name}" => { serial = serial, name = name, value = value } if value != ""
+    }
+  ]...)
+}
+
+resource "scm_variable" "device_region" {
+  for_each = local.device_region_vars
+
+  name       = each.value.name
+  type       = "ip-netmask"
+  value      = each.value.value
+  device     = each.value.serial
   depends_on = [scm_variable.folder]
 }
 
@@ -362,6 +385,24 @@ resource "scm_security_rule" "panel_ldap" {
   log_end     = true
 }
 
+resource "scm_security_rule" "dc_replication" {
+  depends_on = [scm_zone.trust, scm_security_rule.panel_ldap]
+
+  count = length(var.dc_replica_ips) >= 2 ? 1 : 0
+
+  name        = "dc-replication"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["trust"]
+  to          = ["trust"]
+  source      = [for ip in var.dc_replica_ips : "${ip}/32"]
+  destination = [for ip in var.dc_replica_ips : "${ip}/32"]
+  application = ["any"]
+  service     = ["any"]
+  action      = "allow"
+  log_end     = true
+}
+
 resource "scm_security_rule" "gp_users_to_internal" {
   name        = "gp-users-to-internal"
   folder      = local.folder
@@ -374,7 +415,7 @@ resource "scm_security_rule" "gp_users_to_internal" {
   service     = ["application-default"]
   action      = "allow"
   log_end     = true
-  depends_on  = [scm_security_rule.panel_ldap]
+  depends_on  = [scm_security_rule.panel_ldap, scm_security_rule.dc_replication]
 }
 
 resource "scm_security_rule" "spokes_outbound" {

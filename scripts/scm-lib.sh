@@ -36,9 +36,14 @@ scm_token() {
     cat "$_SCM_TOKEN_FILE"; return 0
   fi
   local resp tok
-  resp="$(curl -sS --max-time 30 -u "${SCM_CLIENT_ID}:${SCM_CLIENT_SECRET}" \
-    -d "grant_type=client_credentials" --data-urlencode "scope=tsg_id:${SCM_TSG_ID}" \
-    "$SCM_AUTH_URL")" || scm_die "token request failed (network)"
+  # The client secret goes to curl through a config on stdin, never on its command line
+  # (which any local user can read with ps).
+  local cred="${SCM_CLIENT_ID}:${SCM_CLIENT_SECRET}"
+  cred="${cred//\\/\\\\}"; cred="${cred//\"/\\\"}"   # curl config quoting: \ and "
+  resp="$(printf 'user = "%s"\n' "$cred" \
+    | curl -sS --max-time 30 -K - \
+      -d "grant_type=client_credentials" --data-urlencode "scope=tsg_id:${SCM_TSG_ID}" \
+      "$SCM_AUTH_URL")" || scm_die "token request failed (network)"
   tok="$(jq -r '.access_token // empty' <<<"$resp")"
   [ -n "$tok" ] || scm_die "no access_token in auth response: $(jq -c 'del(.access_token)' <<<"$resp" 2>/dev/null)"
   ( umask 077; printf '%s' "$tok" > "$_SCM_TOKEN_FILE" )
@@ -91,7 +96,7 @@ scm_wait_job() {
   scm_log "job ${id} did not finish within ${timeout}s"; return 1
 }
 
-# scm_wait_children PARENT_JOB_ID [TIMEOUT_SECONDS]
+# scm_wait_children PARENT_JOB_ID [TIMEOUT_SECONDS] [EXPECTED_DEVICES]
 # A config push has TWO levels. The job returned by candidate:push is only SCM's
 # own bookkeeping and finishes FIN/OK as soon as the request is accepted; the real
 # work is one child job per firewall (type CommitAll, status PUSHSENT -> ... -> FIN)
@@ -100,10 +105,12 @@ scm_wait_job() {
 # the same silent-failure class that path A's commit script once had. So: wait for
 # every child (parent_id == PARENT) to reach FIN and require result OK on all.
 scm_wait_children() {
-  local parent="$1" timeout="${2:-1800}" waited=0 resp kids n_total n_fin n_bad
+  # EXPECTED_DEVICES: connected firewalls in the folder. Without it a push could be reported
+  # OK as soon as the FIRST device job finished, before the second one even existed.
+  local parent="$1" timeout="${2:-1800}" expected="${3:-1}" waited=0 resp kids n_total n_fin n_bad conn skipped
   sleep 5   # children are created just after the parent finishes
   while [ "$waited" -lt "$timeout" ]; do
-    resp="$(scm_api GET "/config/operations/v1/jobs?limit=100")" || return 1
+    resp="$(scm_api GET "/config/operations/v1/jobs?limit=200")" || return 1
     # Only judge devices that are connected right now. A device that is still assigned
     # to the folder but no longer exists (a replaced firewall) always ends PUSHFAIL and
     # says nothing about the config; it is reported below, not allowed to fail the push.
@@ -123,7 +130,7 @@ scm_wait_children() {
       scm_log "at least one device rejected the push — details above; inspect with GET /config/operations/v1/jobs/<id>"
       return 1
     fi
-    [ "$n_total" -gt 0 ] && [ "$n_fin" -eq "$n_total" ] && return 0
+    [ "$n_total" -ge "$expected" ] && [ "$n_total" -gt 0 ] && [ "$n_fin" -eq "$n_total" ] && return 0
     sleep 15; waited=$((waited + 15))
   done
   scm_log "device jobs of push ${parent} did not all finish within ${timeout}s"; return 1

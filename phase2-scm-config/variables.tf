@@ -29,10 +29,13 @@ variable "parent_folder" {
 
 # ---- Per-device values (handoff from scripts/scm-onboard-fw.sh) ---------------
 variable "fw_devices" {
-  description = "Device serial => its own dataplane addresses (CIDR). Written to fw_devices.auto.tfvars.json by scripts/scm-onboard-fw.sh once the firewalls have registered. Empty = folder defaults only."
+  description = "Device serial => its own dataplane addresses (CIDR). Written to fw_devices.auto.tfvars.json by scripts/scm-onboard-fw.sh once the firewalls have registered. Empty = folder defaults only. untrust_floating / trust_gw / untrust_gw override the folder defaults (Region A values) for a pair in another region, e.g. Region B: 10.20.10.100/32, 10.20.20.1, 10.20.10.1."
   type = map(object({
-    trust_ip   = string
-    untrust_ip = string
+    trust_ip         = string
+    untrust_ip       = string
+    untrust_floating = optional(string, "")
+    trust_gw         = optional(string, "")
+    untrust_gw       = optional(string, "")
   }))
   default = {}
 }
@@ -96,6 +99,12 @@ variable "guac_rdp_source_cidrs" {
   description = "Guacamole subnet(s) allowed RDP to the DC through the firewalls. [] disables the rule."
   type        = list(string)
   default     = ["10.11.20.0/23"]
+}
+
+variable "dc_replica_ips" {
+  description = "All domain controllers that replicate with each other across regions (e.g. [\"10.13.0.10\", \"10.23.0.10\"]). With two or more, a rule allows any traffic between them (AD replication uses RPC on dynamic ports); without it the cross-region replica hits deny-all. Empty = no rule."
+  type        = list(string)
+  default     = []
 }
 
 variable "dc_private_ip" {

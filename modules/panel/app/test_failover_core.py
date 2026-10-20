@@ -182,13 +182,33 @@ class Scenarios(unittest.TestCase):
         self.assertEqual(ctx.job.status, "done", ctx.job.steps)
         self.assertEqual(f.calls, [])
 
-    def test_timeout_fails_the_job_instead_of_hanging(self):
+    def test_timeout_fails_the_job_and_undoes_the_suspend(self):
         f = Fake()
         f.suspend = lambda u: f.calls.append(("suspend", u))  # peer never takes over
         ctx = make(f)
         fc.run_job(ctx, fc.soft_failover)
         self.assertEqual(ctx.job.status, "failed")
         self.assertIn("timed out", ctx.job.steps[-2]["msg"])
+        self.assertEqual(f.calls, [("suspend", "fw1"), ("functional", "fw1")])  # undone
+
+    def test_hard_failover_starts_the_unit_again_if_the_peer_never_takes_over(self):
+        f = Fake()
+        real_stop = f.stop
+        def stop_no_takeover(u):
+            real_stop(u)
+            f.pending = [p for p in f.pending if "ha_state" not in repr(p[1].__code__.co_names)]
+        f.stop = stop_no_takeover
+        ctx = make(f)
+        fc.run_job(ctx, fc.hard_failover)
+        self.assertEqual(ctx.job.status, "failed")
+        self.assertEqual(f.calls, [("stop", "fw1"), ("start", "fw1")])
+
+    def test_priority_zero_is_the_strongest(self):
+        f = Fake()
+        orig = f.ha
+        f.ha = lambda u: {**orig(u), "priority": {"fw1": "100", "fw2": "0"}[u]}
+        ctx = make(f)
+        self.assertEqual(fc.preferred(ctx), "fw2")
 
     def test_recover_starts_stopped_unit_and_clears_suspend(self):
         f = Fake()

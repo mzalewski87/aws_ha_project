@@ -40,7 +40,7 @@ variable "management_mode" {
   }
 }
 variable "create_panorama" {
-  description = "Deploy Panorama + SSM jump host in this region (true for the primary region only)."
+  description = "Primary region (true for Region A only): path A deploys Panorama + its SSM jump host here; path B (scm) deploys the SSM jump host only. Guacamole and the panel also live only in this region."
   type        = bool
   default     = true
 }
@@ -282,4 +282,10 @@ variable "panel_gp_fqdn" {
   description = "GlobalProtect portal FQDN the panel probes during failover tests."
   type        = string
   default     = ""
+}
+
+variable "panel_alb_ingress_cidrs" {
+  description = "CIDRs allowed to reach the panel ALB."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
 }

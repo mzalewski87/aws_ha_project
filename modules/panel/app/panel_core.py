@@ -263,14 +263,17 @@ class RateLimiter:
     def _recent(self, key):
         now = self.clock()
         recent = [t for t in self._fails.get(key, []) if now - t < self.window]
-        self._fails[key] = recent
+        if recent:
+            self._fails[key] = recent
+        else:  # forget idle keys, so random keys cannot grow the table without bound
+            self._fails.pop(key, None)
         return recent
 
     def blocked(self, key) -> bool:
         return len(self._recent(key)) >= self.limit
 
     def fail(self, key) -> None:
-        self._recent(key).append(self.clock())
+        self._fails[key] = self._recent(key) + [self.clock()]
 
     def reset(self, key) -> None:
         self._fails.pop(key, None)

@@ -8,8 +8,11 @@
 # Lives in the management VPC, i.e. OUTSIDE the firewall data path it reports on:
 # failing a firewall over does not take the panel down. Two hosts in two AZs
 # behind one ALB, so losing a host or an AZ keeps the panel reachable.
-# The panel only READS (HA state, policy simulation); it has no IAM right to touch
-# EC2 and no write-capable firewall account. Secrets come from Secrets Manager.
+# Viewers only read (HA state, topology, policy simulation). Operators can run failover
+# tests: with enable_failover the hosts' role may stop/start the two firewall instances
+# (nothing else in EC2), and the firewall account (role panel-ro, scripts/panel-setup.sh)
+# can run XML-API operational commands — which include HA suspend and also restart, so
+# treat the panel login like firewall admin access. Secrets come from Secrets Manager.
 ###############################################################################
 
 terraform {
@@ -159,7 +162,7 @@ resource "aws_iam_role_policy" "topology" {
       },
       {
         Effect   = "Allow"
-        Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Scan"]
+        Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Scan", "dynamodb:UpdateItem", "dynamodb:DeleteItem"]
         Resource = aws_dynamodb_table.runs.arn
       }
     ]
@@ -275,6 +278,13 @@ resource "aws_instance" "panel" {
     app_sha          = sha256(local.app_bundle) # new code => new user_data => the hosts are replaced
   })
   user_data_replace_on_change = true
+
+  # A new AL2023 release must not replace the hosts (code/config changes still do, through
+  # user_data). New hosts come up before the old ones go, so the panel stays reachable.
+  lifecycle {
+    ignore_changes        = [ami]
+    create_before_destroy = true
+  }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-panel-${count.index + 1}" })
 

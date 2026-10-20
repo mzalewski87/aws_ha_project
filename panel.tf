@@ -14,6 +14,10 @@ resource "terraform_data" "panel_guard" {
       condition     = !var.enable_panel || var.enable_custom_domain
       error_message = "enable_panel requires enable_custom_domain = true (the ALB certificate is DNS-validated in the Route53 zone that module custom_domain creates)."
     }
+    precondition {
+      condition     = !var.enable_panel || var.management_mode == "scm"
+      error_message = "enable_panel is path B only (management_mode = \"scm\"): its AD login needs the panel-ldap-to-dc rule from phase2-scm-config; path A has no such rule, so nobody could sign in."
+    }
   }
 }
 

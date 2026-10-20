@@ -6,8 +6,10 @@
 # /gp-tunnel-settings), so these live in the firewall's LOCAL configuration, written
 # through the PAN-OS XML API. Live-verified on PAN-OS 12.2.3:
 #   * local config SURVIVES pushes from SCM,
-#   * the HA pair copies it to the passive unit (Running Configuration: synchronized),
-#   * after a forced failover the same public address keeps serving the portal.
+#   * local config is NOT replicated between the two SCM-managed HA peers (the local commit
+#     warns "not synchronized to the HA peer"), so every mode must run on EACH unit,
+#   * after a forced failover the same public address keeps serving the portal (once both
+#     units have been built).
 # Everything else GP needs (tunnel interface, vpn zone, loopback bind address, ARE
 # routing, policy incl. the inbound-GP allow) is in phase2-scm-config.
 #
@@ -19,8 +21,9 @@
 #               (terraform output custom_domain_cert_pem / _key_pem)
 #   cleanup     delete the `gpapi` superuser again
 #
-# ALWAYS run against the ACTIVE unit: the script finds it itself (SCM device `ha_state`).
-# A change made on the passive unit is overwritten by the next HA sync — learned live.
+# Target: FW_IP if set (run once per unit: FW_IP=<unit 1>, then FW_IP=<unit 2>), else the
+# ACTIVE unit of the pair given by MGMT_IPS (or of the whole tenant if MGMT_IPS is empty —
+# set MGMT_IPS as soon as there is more than one pair, e.g. a second region).
 #
 # Required env (never commit values; keep them in an untracked file):
 #   SCM_TSG_ID SCM_CLIENT_ID SCM_CLIENT_SECRET     (see scm-lib.sh)
@@ -28,7 +31,10 @@
 #   GP_USER_PASSWORD   password of the GP test user (`gpuser`)
 #   JUMP_INSTANCE_ID   SSM jump host (root output ssm_jumphost_instance_id)
 #   KEY_FILE           SSH private key (for `admin`/`cleanup`, which use the CLI)
-# Optional: GW_NAME PORTAL_NAME GW_FQDN CERT_CN FLOATING IP_POOL SPLIT_ROUTES MGMT_IPS
+# Optional: GW_NAME PORTAL_NAME CERT_CN FLOATING IP_POOL SPLIT_ROUTES MGMT_IPS FW_IP
+#   GATEWAYS  the portal's external gateways, space-separated "fqdn[:priority]" (default: GW_FQDN
+#             with priority 1). Multi-region: GATEWAYS="gw-a.<zone>:1 gw-b.<zone>:2" on the
+#             portal units of BOTH regions; clients then pick the best-available gateway.
 #
 # Usage: scm-gp-local.sh <admin|build|letsencrypt|cleanup>
 ###############################################################################
@@ -58,22 +64,27 @@ TUN_IF="tunnel.1"; LOCAL_IF="loopback.1"     # SCM $gp_tunnel / $gp_loopback def
 GPUSER="${GPUSER:-gpuser}"
 LP="${LP:-22292}"
 
-# Active unit = the connected device whose SCM ha_state is "active"; its mgmt IP.
+# Active unit = the connected device whose SCM ha_state is "active" (within MGMT_IPS, if set).
 active_fw_ip() {
   scm_api GET "/config/setup/v1/devices?limit=500" \
-    | jq -r '(.data // []) | map(select(.is_connected == true and .ha_state == "active")) | first | .ip_address // empty'
+    | jq -r --arg ips "${MGMT_IPS:-}" '($ips | split(" ") | map(select(. != ""))) as $want
+        | (.data // []) | map(select(.is_connected == true and .ha_state == "active"
+            and (($want | length) == 0 or (.ip_address as $i | $want | index($i)) != null)))
+        | first | .ip_address // empty'
 }
 FW_IP="${FW_IP:-$(active_fw_ip)}"
 [ -n "$FW_IP" ] || scm_die "no connected ACTIVE firewall found in SCM"
 scm_log "active firewall: $FW_IP"
 
+SSM_LOG="$(mktemp "${TMPDIR:-/tmp}/scm-gp-ssm.XXXXXX")"
+
 open_tunnel() {  # $1 = remote port
   if nc -z -G 2 127.0.0.1 "$LP" >/dev/null 2>&1; then scm_die "local port $LP already in use (stale SSM tunnel?)"; fi
   aws ssm start-session --target "$JUMP_INSTANCE_ID" --document-name AWS-StartPortForwardingSessionToRemoteHost \
-    --parameters "{\"host\":[\"$FW_IP\"],\"portNumber\":[\"$1\"],\"localPortNumber\":[\"$LP\"]}" >/tmp/scm-gp-ssm.log 2>&1 &
+    --parameters "{\"host\":[\"$FW_IP\"],\"portNumber\":[\"$1\"],\"localPortNumber\":[\"$LP\"]}" >"$SSM_LOG" 2>&1 &
   SSM_PID=$!
   # Kill the aws wrapper AND its session-manager-plugin child, or the port stays bound.
-  trap 'kill $SSM_PID 2>/dev/null || true; pkill -f "session-manager-plugin.*$LP" 2>/dev/null || true; [ -n "${TMPD:-}" ] && rm -rf "$TMPD"' EXIT
+  trap 'kill $SSM_PID 2>/dev/null || true; pkill -f "session-manager-plugin.*$LP" 2>/dev/null || true; [ -n "${TMPD:-}" ] && rm -rf "$TMPD"; [ -n "${F:-}" ] && rm -f "$F"; rm -f "$SSM_LOG"' EXIT
 }
 
 cli_file() {  # $1 = file of CLI commands; runs them over SSH (admin/cleanup only)
@@ -103,8 +114,9 @@ api_login() {
   done
   # `|| true`: with set -e + pipefail a grep that finds no <key> would end the script SILENTLY
   # before the check below (seen live: both units "FAILED" with no message at all).
-  KEY="$(curl -sk -m 60 -G "$BASE" --data-urlencode type=keygen --data-urlencode user=gpapi \
-         --data-urlencode "password=$GPAPI_PASSWORD" | grep -o '<key>[^<]*' | cut -c6- || true)"
+  # POST with the password read from stdin: never in a URL (logs) or on curl's command line (ps).
+  KEY="$(printf '%s' "$GPAPI_PASSWORD" | curl -sk -m 60 "$BASE" --data-urlencode type=keygen \
+         --data-urlencode user=gpapi --data-urlencode "password@-" | grep -o '<key>[^<]*' | cut -c6- || true)"
   [ -n "$KEY" ] || scm_die "no API key from $FW_IP: the gpapi admin does not exist on THIS unit (local config is per unit — run '$0 admin' with FW_IP=$FW_IP) or its management API is not up yet"
 }
 
@@ -124,7 +136,9 @@ commit_wait() {
     scm_log "commit $job status=${st:-?} result=${res:-?}"
     if [ "$st" = "FIN" ]; then
       [ "$res" = "OK" ] && { scm_log "COMMIT OK"; return 0; }
-      sed -E 's/<[^>]+>/\n/g' <<<"$j" | grep -vE '^\s*$' | head -40 >&2; scm_die "commit failed"
+      # BSD sed has no \n in replacements: turn tags into line breaks with tr instead.
+      sed -E 's/<[^>]+>/|/g' <<<"$j" | tr '|' '\n' | grep -vE '^[[:space:]]*$' | head -40 >&2 || true
+      scm_die "commit failed"
     fi
     sleep 10
   done
@@ -137,15 +151,15 @@ NET="/config/devices/entry[@name='localhost.localdomain']/network"
 case "$MODE" in
 admin)
   : "${GPAPI_PASSWORD:?GPAPI_PASSWORD required}"
-  F="$(mktemp)"; trap 'rm -f "$F"' RETURN
+  F="$(umask 077; mktemp)"   # holds the password hash; removed below and by the EXIT trap
   printf 'set cli pager off\nconfigure\nset mgt-config users gpapi phash %s\nset mgt-config users gpapi permissions role-based superuser yes\ncommit description gpapiadmin\ny\nexit\nexit\n' \
-    "$(openssl passwd -1 "$GPAPI_PASSWORD")" > "$F"
-  cli_file "$F" ;;
+    "$(printf '%s' "$GPAPI_PASSWORD" | openssl passwd -1 -stdin)" > "$F"
+  cli_file "$F"; rm -f "$F" ;;
 
 cleanup)
-  F="$(mktemp)"; trap 'rm -f "$F"' RETURN
+  F="$(mktemp)"
   printf 'set cli pager off\nconfigure\ndelete mgt-config users gpapi\ncommit description removegpapi\ny\nexit\nexit\n' > "$F"
-  cli_file "$F" ;;
+  cli_file "$F"; rm -f "$F" ;;
 
 build)
   : "${GP_USER_PASSWORD:?GP_USER_PASSWORD required}"
@@ -163,8 +177,12 @@ build)
   #    IDEMPOTENCE: `build` is re-run whenever the GP settings change (e.g. DNS). If the real
   #    certificate (gp-le, from `letsencrypt`) is already on the unit it must stay in use —
   #    re-pointing the profile at the placeholder silently broke a working, trusted portal.
-  le="$(curl -sk -m 60 -G "$BASE" --data-urlencode type=config --data-urlencode action=get \
-        --data-urlencode "xpath=$VS/certificate/entry[@name='gp-le']" --data-urlencode "key=$KEY" || true)"
+  # Look in vsys1 AND shared: an import without a vsys parameter can land in /config/shared.
+  le=""
+  for loc in "$VS" "/config/shared"; do
+    le="$le$(curl -sk -m 60 "$BASE" --data-urlencode type=config --data-urlencode action=get \
+          --data-urlencode "xpath=$loc/certificate/entry[@name='gp-le']" --data-urlencode "key=$KEY" || true)"
+  done
   if grep -q 'name="gp-le"' <<<"$le"; then
     CERT_USE="gp-le"; scm_log "OK    certificate gp-le already present — keeping it (bootstrap certificate skipped)"
   else
@@ -175,7 +193,7 @@ build)
   fi
   setcfg "$VS/ssl-tls-service-profile/entry[@name='gp-ssl-tls']" \
     "<certificate>$CERT_USE</certificate><protocol-settings><min-version>tls1-2</min-version><max-version>tls1-2</max-version></protocol-settings>" "ssl-tls profile"
-  setcfg "$VS/local-user-database/user/entry[@name='$GPUSER']" "<phash>$(openssl passwd -1 "$GP_USER_PASSWORD")</phash>" "local user $GPUSER"
+  setcfg "$VS/local-user-database/user/entry[@name='$GPUSER']" "<phash>$(printf '%s' "$GP_USER_PASSWORD" | openssl passwd -1 -stdin)</phash>" "local user $GPUSER"
   setcfg "$VS/authentication-profile/entry[@name='gp-local']" \
     "<method><local-database/></method><allow-list><member>all</member></allow-list>" "authentication profile"
   # 2) Second config subtree of a tunnel-mode gateway (network/tunnel/global-protect-gateway);
@@ -186,8 +204,16 @@ build)
   setcfg "$VS/global-protect/global-protect-gateway/entry[@name='$GW_NAME']" \
     "<tunnel-mode>yes</tunnel-mode><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><remote-user-tunnel>$TUN_IF</remote-user-tunnel><client-auth><entry name=\"default\"><authentication-profile>gp-local</authentication-profile><os>Any</os></entry></client-auth><remote-user-tunnel-configs><entry name=\"gp-tunnel-config\"><ip-pool><member>$IP_POOL</member></ip-pool><split-tunneling><access-route><member>$SPLIT_ROUTES</member></access-route></split-tunneling><dns-server><member>$DNS_SERVER_PRIMARY</member>${DNS_SERVER_SECONDARY:+<member>$DNS_SERVER_SECONDARY</member>}</dns-server><dns-suffix><member>$DNS_SUFFIX</member></dns-suffix></entry></remote-user-tunnel-configs>" "gateway"
   # 4) The portal needs the three custom pages or the commit fails ("is missing 'custom-*-page'").
+  #    Its external gateways: GATEWAYS ("fqdn[:priority] ..."), else GW_FQDN alone. An IP
+  #    would go in <ip>, not <fqdn> ("fqdn <ip> is invalid" — path A); these are FQDNs.
+  GW_ENTRIES=""
+  for g in ${GATEWAYS:-$GW_FQDN:1}; do
+    fq="${g%%:*}"; pr="${g##*:}"; [ "$pr" = "$g" ] && pr=1
+    [[ "$fq" =~ ^[A-Za-z0-9.-]+$ && "$pr" =~ ^[0-9]+$ ]] || scm_die "bad GATEWAYS entry: $g"
+    GW_ENTRIES="$GW_ENTRIES<entry name=\"${fq%%.*}\"><fqdn>$fq</fqdn><priority-rule><entry name=\"Any\"><priority>$pr</priority></entry></priority-rule></entry>"
+  done
   setcfg "$VS/global-protect/global-protect-portal/entry[@name='$PORTAL_NAME']" \
-    "<portal-config><custom-login-page>factory-default</custom-login-page><custom-home-page>factory-default</custom-home-page><custom-help-page>factory-default</custom-help-page><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><client-auth><entry name=\"default\"><authentication-profile>gp-local</authentication-profile><os>Any</os></entry></client-auth></portal-config><client-config><configs><entry name=\"default\"><gateways><external><list><entry name=\"gw-a\"><fqdn>$GW_FQDN</fqdn><priority-rule><entry name=\"Any\"><priority>1</priority></entry></priority-rule></entry></list></external></gateways></entry></configs></client-config>" "portal"
+    "<portal-config><custom-login-page>factory-default</custom-login-page><custom-home-page>factory-default</custom-home-page><custom-help-page>factory-default</custom-help-page><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><client-auth><entry name=\"default\"><authentication-profile>gp-local</authentication-profile><os>Any</os></entry></client-auth></portal-config><client-config><configs><entry name=\"default\"><gateways><external><list>$GW_ENTRIES</list></external></gateways></entry></configs></client-config>" "portal"
   [ "$FAILED" = "0" ] || scm_die "a step failed — not committing"
   commit_wait ;;
 

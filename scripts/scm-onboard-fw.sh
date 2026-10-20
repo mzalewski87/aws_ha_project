@@ -30,17 +30,25 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scm-lib.sh
 source "$HERE/scm-lib.sh"
 
-[ "$#" -ge 2 ] || scm_die "usage: $0 <folder> <hostname>=<trust_cidr>,<untrust_cidr> [...]"
+[ "$#" -ge 2 ] || scm_die "usage: $0 <folder> <serial>=<trust_cidr>,<untrust_cidr>[,<floating_cidr>,<trust_gw>,<untrust_gw>] [...]"
 FOLDER="$1"; shift
 WAIT_MINUTES="${WAIT_MINUTES:-30}"
 OUT_FILE="${OUT_FILE:-$HERE/../phase2-scm-config/fw_devices.auto.tfvars.json}"
 
+# Existing entries are KEPT (a second region's pair is added next to the first one); a serial
+# given again is replaced. REPLACE=1 starts from an empty map instead.
 devices_json='{}'
+if [ "${REPLACE:-0}" != "1" ] && [ -s "$OUT_FILE" ]; then
+  devices_json="$(jq -c '.fw_devices // {}' "$OUT_FILE")" || scm_die "cannot read $OUT_FILE"
+fi
 for spec in "$@"; do
   host="${spec%%=*}"; addrs="${spec#*=}"
-  trust="${addrs%%,*}"; untrust="${addrs#*,}"
-  [ -n "$host" ] && [ -n "$trust" ] && [ -n "$untrust" ] && [ "$host" != "$spec" ] && [ "$trust" != "$addrs" ] \
-    || scm_die "bad spec '$spec' (want host=trust_cidr,untrust_cidr)"
+  IFS=, read -r trust untrust floating trust_gw untrust_gw <<<"$addrs"
+  [ -n "$host" ] && [ -n "${trust:-}" ] && [ -n "${untrust:-}" ] && [ "$host" != "$spec" ] \
+    || scm_die "bad spec '$spec' (want serial=trust_cidr,untrust_cidr[,floating_cidr,trust_gw,untrust_gw])"
+  if [ -n "${floating:-}${trust_gw:-}${untrust_gw:-}" ] && { [ -z "${floating:-}" ] || [ -z "${trust_gw:-}" ] || [ -z "${untrust_gw:-}" ]; }; then
+    scm_die "bad spec '$spec': give all three of floating_cidr,trust_gw,untrust_gw or none (they override the Region-A folder defaults, e.g. for a Region B pair)"
+  fi
 
   scm_log "waiting for '$host' to appear and connect (up to ${WAIT_MINUTES} min)..."
   dev=""; waited=0
@@ -52,9 +60,7 @@ for spec in "$@"; do
   [ -n "$dev" ] || scm_die "'$host' never showed up connected in tenant ${SCM_TSG_ID}. Check: licensing (auth code credits), device-certificate PIN (60-min TTL), outbound HTTPS from the mgmt subnet."
 
   id="$(jq -r '.id' <<<"$dev")"
-  # [VERIFY LIVE] SCM names a device by its serial; the scm_variable `device`
-  # attribute takes that name. If this prints something that is not a serial,
-  # fix the mapping here before the second terraform apply.
+  # SCM names a device by its serial (verified live); the scm_variable `device` attribute takes it.
   serial="$(jq -r '.name' <<<"$dev")"
   scm_log "$host -> device id=$id name/serial=$serial model=$(jq -r '.model // "?"' <<<"$dev") sw=$(jq -r '.software_version // "?"' <<<"$dev") folder=$(jq -r '.folder // "?"' <<<"$dev")"
 
@@ -67,7 +73,9 @@ for spec in "$@"; do
   fi
 
   devices_json="$(jq -c --arg s "$serial" --arg t "$trust" --arg u "$untrust" \
-    '. + {($s): {trust_ip:$t, untrust_ip:$u}}' <<<"$devices_json")"
+    --arg f "${floating:-}" --arg tg "${trust_gw:-}" --arg ug "${untrust_gw:-}" \
+    '. + {($s): ({trust_ip:$t, untrust_ip:$u}
+                 + (if $f != "" then {untrust_floating:$f, trust_gw:$tg, untrust_gw:$ug} else {} end))}' <<<"$devices_json")"
 done
 
 # Atomic write, owner-only (no secrets inside, but it names the devices).

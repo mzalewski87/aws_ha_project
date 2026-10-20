@@ -418,7 +418,13 @@ variable "panel_hostname" {
 }
 
 variable "panel_enable_failover" {
-  description = "Let panel operators (AD group panel-operators) run failover tests from the panel. Adds an IAM role that can stop/start ONLY the two firewall instances of the pair."
+  description = "Let panel operators (AD group panel-operators) run failover tests from the panel. Adds an IAM role that can stop/start ONLY the two firewall instances of the pair. Off by default: the panel ALB is internet-facing."
   type        = bool
-  default     = true
+  default     = false
+}
+
+variable "panel_alb_ingress_cidrs" {
+  description = "CIDRs allowed to reach the panel ALB (443/80). The open internet by default (the AD login is the control); narrow it to your own addresses, especially with panel_enable_failover."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
 }

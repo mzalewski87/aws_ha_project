@@ -29,8 +29,8 @@ body="$(jq -nc --arg f "$FOLDER" --arg d "$DESC" '{folders:[$f], description:$d}
 resp="$(scm_api POST "/config/operations/v1/config-versions/candidate:push" "$body")" \
   || scm_die "push request rejected (see error above)"
 
-# [VERIFY LIVE] the 201 body shape is not documented in the spec; accept the
-# common spellings. If none is present, print the body so the key can be fixed.
+# The 201 body shape is not documented in the spec; accept the common spellings (live: the
+# job id is returned). If none is present, print the body so the key can be fixed.
 job="$(jq -r '.job_id // .jobId // .id // (.data // [] | first | .id) // empty' <<<"$resp")"
 [ -n "$job" ] || scm_die "push accepted but no job id found in response: $resp"
 scm_log "push job id: $job"
@@ -39,5 +39,8 @@ scm_wait_job "$job" "${PUSH_TIMEOUT:-1200}" || scm_die "push job $job did not fi
 scm_log "SCM accepted the push (job $job) — now waiting for each firewall's local commit"
 
 # The parent job above is only SCM's side. The firewalls commit in child jobs.
-scm_wait_children "$job" "${PUSH_TIMEOUT:-1800}" || scm_die "a firewall did not finish committing OK"
+expected="$(scm_api GET "/config/setup/v1/devices?limit=500" \
+  | jq --arg f "$FOLDER" '[ (.data // [])[] | select(.folder == $f and .is_connected == true) ] | length')"
+scm_log "waiting for ${expected} connected firewall(s) in '$FOLDER' to commit"
+scm_wait_children "$job" "${PUSH_TIMEOUT:-1800}" "${expected:-1}" || scm_die "a firewall did not finish committing OK"
 scm_log "push to folder '$FOLDER' finished OK on every device"

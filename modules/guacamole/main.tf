@@ -181,6 +181,12 @@ resource "aws_instance" "guac" {
   })
   user_data_replace_on_change = true
 
+  # The AMI comes from the always-latest AL2023 parameter: without this every new AL2023
+  # release would replace the host and wipe its PostgreSQL (users, TOTP enrolments).
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   tags = merge(var.tags, { Name = "${var.name_prefix}-guacamole" })
 
   depends_on = [aws_secretsmanager_secret_version.admin]
@@ -194,7 +200,9 @@ resource "aws_lb" "this" {
   subnets            = var.alb_subnet_ids
   security_groups    = [aws_security_group.alb.id]
   idle_timeout       = 3600 # long-lived websocket/tunnel sessions
-  tags               = var.tags
+
+  drop_invalid_header_fields = true
+  tags                       = var.tags
 }
 
 resource "aws_lb_target_group" "this" {

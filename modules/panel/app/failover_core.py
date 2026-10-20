@@ -60,10 +60,10 @@ class ProbeStats:
 
 
 class Job:
-    def __init__(self, scenario, user, phases=(), clock=time.time, options=None):
+    def __init__(self, scenario, user, phases=(), clock=time.time, options=None, run_id=None):
         self.clock = clock
         self.started = clock()
-        self.id = f"{int(self.started)}-{scenario}"
+        self.id = run_id or f"{int(self.started)}-{scenario}"
         self.scenario = scenario
         self.user = user
         self.options = dict(options or {})
@@ -163,8 +163,9 @@ def preferred(ctx):
     """The unit that should normally be active: lowest HA device priority (PAN-OS: lower wins)."""
     prios = {}
     for u in ctx.units:
+        raw = (ctx.ha(u) or {}).get("priority")
         try:
-            prios[u] = int((ctx.ha(u) or {}).get("priority") or 0) or 10**6
+            prios[u] = int(raw) if raw not in (None, "") else 10**6  # 0 is valid (and the strongest)
         except ValueError:
             prios[u] = 10**6
     return sorted(ctx.units, key=lambda u: (prios[u], u))[0]
@@ -175,7 +176,9 @@ def ensure_synced(ctx, active, passive, timeout=240):
 
     Live-seen: the pair can report 'not synchronized' for a while after a commit (for example a
     push from SCM) and then recover by itself. So wait briefly, then force a sync from the active
-    unit, then wait again. Abort only if it still has not converged.
+    unit, then wait again. Abort only if it still has not converged. (Forcing is the last resort:
+    on SCM-managed pairs it was checked live that sync-to-remote did not overwrite the peer's own
+    interface addresses, which come from SCM per-device variables.)
     """
     def synced():
         a, p = ctx.ha(active), ctx.ha(passive)
@@ -184,9 +187,9 @@ def ensure_synced(ctx, active, passive, timeout=240):
     if synced():
         ctx.job.log("running configuration is synchronized on both units")
         return
-    ctx.job.log("running configuration is NOT synchronized: giving it 20s, then forcing a sync", "warn")
+    ctx.job.log("running configuration is NOT synchronized: giving it 90s, then forcing a sync", "warn")
     try:
-        ctx.wait(synced, "configuration synchronized on its own", 20, 5)
+        ctx.wait(synced, "configuration synchronized on its own", 90, 5)
         return
     except Aborted:
         pass
@@ -202,6 +205,21 @@ def ensure_synced(ctx, active, passive, timeout=240):
                       "The two units have diverging local configuration: compare them and commit on the active unit.")
 
 
+def _undo_on_abort(ctx, step, undo):
+    """Run step(); if it (or the wait inside it) fails, run undo() before re-raising, so an
+    aborted test never leaves a unit suspended or stopped with nobody to bring it back."""
+    try:
+        return step()
+    except Exception as exc:
+        ctx.job.log(f"step failed ({exc}); undoing it", "error")
+        try:
+            undo()
+            ctx.job.log("undo sent")
+        except Exception as undo_exc:  # report, keep the original error
+            ctx.job.log(f"undo failed too: {undo_exc}", "error")
+        raise
+
+
 def failback(ctx):
     """Make the preferred unit active again by suspending the current active one, then restore it."""
     pref = preferred(ctx)
@@ -212,8 +230,11 @@ def failback(ctx):
     ensure_synced(ctx, cur, other)
     ctx.job.log(f"failing back: suspending {cur} so that {pref} becomes active")
     ctx.job.mark(f"failback: suspend {cur}")
-    ctx.api.suspend(cur)
-    t = ctx.wait(lambda: ctx.is_active(pref), f"{pref} becomes active", 180, 2)
+
+    def go():
+        ctx.api.suspend(cur)
+        return ctx.wait(lambda: ctx.is_active(pref), f"{pref} becomes active", 180, 2)
+    t = _undo_on_abort(ctx, go, lambda: ctx.api.functional(cur))
     ctx.job.result["failback_s"] = round(t, 1)
     ctx.job.mark(f"{pref} active")
     ctx.api.functional(cur)
@@ -247,9 +268,12 @@ def soft_failover(ctx):
     ctx.job.enter("trigger failover")
     ctx.job.log(f"suspending {x} (request high-availability state suspend)")
     ctx.job.mark(f"suspend {x}")
-    ctx.api.suspend(x)
-    ctx.job.enter("takeover")
-    takeover = ctx.wait(lambda: ctx.is_active(y), f"{y} becomes active", 180, 2)
+
+    def go():
+        ctx.api.suspend(x)
+        ctx.job.enter("takeover")
+        return ctx.wait(lambda: ctx.is_active(y), f"{y} becomes active", 180, 2)
+    takeover = _undo_on_abort(ctx, go, lambda: ctx.api.functional(x))
     ctx.job.result["takeover_s"] = round(takeover, 1)
     ctx.job.mark(f"{y} active")
     ctx.job.enter("observe")
@@ -276,9 +300,12 @@ def hard_failover(ctx):
     ctx.job.enter("stop active instance")
     ctx.job.log(f"stopping the EC2 instance of {x}")
     ctx.job.mark(f"EC2 stop {x}")
-    ctx.ec2.stop(x)
-    ctx.job.enter("takeover")
-    takeover = ctx.wait(lambda: ctx.is_active(y), f"{y} becomes active", 300, 2)
+
+    def go():
+        ctx.ec2.stop(x)
+        ctx.job.enter("takeover")
+        return ctx.wait(lambda: ctx.is_active(y), f"{y} becomes active", 300, 2)
+    takeover = _undo_on_abort(ctx, go, lambda: ctx.ec2.start(x))
     ctx.job.result["takeover_s"] = round(takeover, 1)
     ctx.job.mark(f"{y} active")
     ctx.job.enter("observe")

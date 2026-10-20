@@ -12,7 +12,6 @@
 # Required env (values never committed):
 #   AWS_REGION            deploy region
 #   ad:  DC_INSTANCE_ID   (root output dc_instance_id)
-#        DOMAIN_ADMIN_USER / DOMAIN_ADMIN_PASSWORD   (AD admin; used for the scheduled task)
 #        PANEL_USERS      space-separated sAMAccountNames to add to the group
 #        optional PANEL_OPERATORS  accounts that may also run failover tests (group panel-operators)
 #        optional PANEL_GROUP (default panel-admins), DOMAIN (default panw.labs)
@@ -30,11 +29,13 @@ say() { echo "[panel] $*"; }
 die() { echo "[panel] ERROR: $*" >&2; pkill -f 'session-manager-plugin.*22443' 2>/dev/null || true; exit 1; }
 
 ad_step() {
-  : "${DC_INSTANCE_ID:?}" "${DOMAIN_ADMIN_USER:?}" "${DOMAIN_ADMIN_PASSWORD:?}" "${PANEL_USERS:?}"
+  # Runs as SYSTEM on the DC (a domain controller's SYSTEM can manage AD): no admin password needed.
+  : "${DC_INSTANCE_ID:?}" "${PANEL_USERS:?}"
   # PANEL_USERS may sign in (read-only views). PANEL_OPERATORS may also run failover tests;
   # they are put into BOTH groups, because the panel requires the first for any access.
   local group="${PANEL_GROUP:-panel-admins}" opgroup="${PANEL_OPERATOR_GROUP:-panel-operators}"
-  local domain="${DOMAIN:-panw.labs}" users="" ops="" u
+  local users="" ops="" u
+  for u in "$group" "$opgroup"; do [[ "$u" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "invalid group name: $u"; done
   for u in $PANEL_USERS ${PANEL_OPERATORS:-}; do
     [[ "$u" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "invalid user name: $u"
     users="${users}'${u}',"
@@ -85,8 +86,9 @@ fw_step() {
     for _ in $(seq 1 20); do nc -z -G 2 127.0.0.1 "$lp" >/dev/null 2>&1 && break; sleep 1; done
     # shellcheck disable=SC2064
     trap "kill $pid 2>/dev/null || true; pkill -f 'session-manager-plugin.*$lp' 2>/dev/null || true" RETURN
-    res="$(fw_api "$lp" --data-urlencode type=keygen --data-urlencode "user=$FW_ADMIN_USER" \
-          --data-urlencode "password=$FW_ADMIN_PASSWORD" || true)"
+    # Password from stdin: not visible in ps, not in a URL.
+    res="$(printf '%s' "$FW_ADMIN_PASSWORD" | fw_api "$lp" --data-urlencode type=keygen \
+          --data-urlencode "user=$FW_ADMIN_USER" --data-urlencode "password@-" || true)"
     key="$(sed -nE 's/.*<key>([^<]+)<\/key>.*/\1/p' <<<"$res")"
     [ -n "$key" ] || die "no API key from $ip as $FW_ADMIN_USER. Answer: $(tr -d '\n' <<<"$res" | cut -c1-300)"
     hash="$(fw_api "$lp" --data-urlencode type=op --data-urlencode "key=$key" \
@@ -107,8 +109,13 @@ fw_step() {
           --data-urlencode "xpath=/config/mgt-config/users/entry[@name='${user}']" \
           --data-urlencode "element=<phash>${hash}</phash><permissions><role-based><custom><profile>panel-ro</profile></custom></role-based></permissions>")"
     grep -q 'status="success"' <<<"$res" || die "creating $user on $ip failed: $res"
-    job="$(fw_api "$lp" --data-urlencode type=commit --data-urlencode "key=$key" --data-urlencode "cmd=<commit></commit>" \
-          | sed -nE 's/.*<job>([0-9]+)<\/job>.*/\1/p')"
+    res="$(fw_api "$lp" --data-urlencode type=commit --data-urlencode "key=$key" --data-urlencode "cmd=<commit></commit>")"
+    job="$(sed -nE 's/.*<job>([0-9]+)<\/job>.*/\1/p' <<<"$res")"
+    # No job id is only fine when there was nothing to commit; anything else (a pending commit,
+    # a lock, a validation error) must not end in "ready".
+    if [ -z "$job" ] && ! grep -qi "no changes\|There are no changes" <<<"$res"; then
+      die "commit on $ip did not start: $(tr -d '\n' <<<"$res" | cut -c1-300)"
+    fi
     if [ -n "$job" ]; then
       for _ in $(seq 1 60); do
         res="$(fw_api "$lp" --data-urlencode type=op --data-urlencode "key=$key" --data-urlencode "cmd=<show><jobs><id>${job}</id></jobs></show>")"

@@ -6,19 +6,19 @@
 # SCM schedules software upgrades through two objects (device-settings API):
 #   * a RULE      — which devices (match_criteria: folders / models / excluded serials)
 #   * a SCHEDULE  — which image, download vs install, start time, `ha_orchestration`
-# With ha_orchestration = true SCM sequences the pair itself (passive first) instead of
-# taking both firewalls down at once. Progress is read from /software-upgrade-status,
-# which reports per device and per phase (precheck, downloading, upgrading, postcheck).
+# ha_orchestration = true is sent, but live (12.2.3 -> 12.2.4) both units rebooted within a few
+# seconds of each other, so plan the upgrade as a short outage, not a rolling one.
+# /software-upgrade-status stayed empty during a successful upgrade; completion is judged by
+# what the devices report (target version, connected, every pair active/passive).
 #
 # WHY A SCRIPT: the `scm` Terraform provider has no resource for upgrades.
 #
 # Usage: scm-upgrade.sh <folder> <version> [start_in_minutes=3]
 #   e.g. scm-upgrade.sh AWS-HA-Transit 12.2.4
 #
-# [VERIFY LIVE] The response bodies of POST /software-upgrade-rules and
-# /software-upgrade-schedules and the exact start-time time zone are not in the OpenAPI
-# document; ids are read from the returned `id` field and the start time is given in UTC.
-# Changing the version recreates nothing: it is an in-place upgrade with a reboot of each
+# Learned live (the OpenAPI document is wrong or silent on these): ids come back in the `id`
+# field, dates are YYYY/MM/DD, start times are read as UTC, job_type must be
+# download-install-reboot. Changing the version recreates nothing: it is an in-place upgrade with a reboot of each
 # firewall, so GlobalProtect and the inspected path see a short interruption on failover.
 ###############################################################################
 set -euo pipefail
@@ -29,6 +29,7 @@ source "$HERE/scm-lib.sh"
 FOLDER="${1:?usage: $0 <folder> <version> [start_in_minutes]}"
 VERSION="${2:?usage: $0 <folder> <version> [start_in_minutes]}"
 IN_MIN="${3:-3}"
+[[ "$IN_MIN" =~ ^[0-9]+$ ]] || scm_die "start_in_minutes must be a number"
 BASE="/config/device/v1"
 NAME="upgrade-${FOLDER}-${VERSION//./-}"
 
@@ -44,17 +45,9 @@ unhealthy="$(scm_api GET "/config/setup/v1/devices?limit=500" | jq -r --arg f "$
 scm_api GET "/config/setup/v1/devices?limit=500" | jq -r --arg f "$FOLDER" \
   '(.data // [])[] | select(.folder == $f) | "  \(.name)  sw=\(.software_version)  ha=\(.ha_state)"' >&2
 
-# Start time: UTC, a few minutes from now (portable between macOS and Linux date).
-if date -u -v+"${IN_MIN}"M +%H:%M >/dev/null 2>&1; then
-  START_AT="$(date -u -v+"${IN_MIN}"M +%H:%M)"
-else
-  START_AT="$(date -u -d "+${IN_MIN} minutes" +%H:%M)"
-fi
-START_DATE="$(date -u +%F)"
-
 # Reuse an existing rule of the same name instead of failing on a re-run.
 rule_id="$(scm_api GET "$BASE/software-upgrade-rules?name=$(scm_urlenc "$NAME")" \
-  | jq -r '(if type=="array" then . else (.data // []) end) | map(select(.name == "'"$NAME"'")) | first | .id // empty')"
+  | jq -r --arg n "$NAME" '(if type=="array" then . else (.data // []) end) | map(select(.name == $n)) | first | .id // empty')"
 if [ -z "$rule_id" ]; then
   rule="$(jq -nc --arg n "$NAME" --arg f "$FOLDER" \
     '{name:$n, description:"managed by scm-upgrade.sh", enabled:true,
@@ -94,6 +87,9 @@ resp="$(scm_api POST "$BASE/software-upgrade-schedules" "$sched")" \
 sid="$(jq -r '.id // empty' <<<"$resp")"
 [ -n "$sid" ] || scm_die "schedule created but no id in the response: $resp"
 scm_log "schedule $sid: PAN-OS $VERSION on '$FOLDER', HA orchestrated; download $DL_DATE $DL_AT, install $IN_DATE $IN_AT ($TZN)"
+# Whatever happens next (success, timeout, error), never leave an enabled schedule behind: its
+# start time is in the past, and a re-run would fail on the duplicate name.
+trap 'scm_api DELETE "$BASE/software-upgrade-schedules/$sid" >/dev/null 2>&1 && scm_log "schedule $sid removed"' EXIT
 
 # Wait for the result. GET /software-upgrade-status stayed an EMPTY LIST for the whole of a
 # real, successful upgrade on this tenant, so it cannot be the completion signal. What the
@@ -114,14 +110,13 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   ok="$(jq -r --arg f "$FOLDER" --arg v "$VERSION" '
       [(.data // [])[] | select(.folder == $f)] as $d
       | ($d | length) > 0
-        and ($d | all(.software_version | startswith($v)))
+        and ($d | all(.software_version as $s | $s == $v or ($s | startswith($v + "-"))))
         and ($d | all(.is_connected == true))
-        and (($d | map(.ha_state) | sort) == ["active","passive"])' <<<"$devs" 2>/dev/null || echo false)"
+        and ($d | all(.ha_state == "active" or .ha_state == "passive"))
+        and (($d | map(select(.ha_state == "active")) | length) == ($d | map(select(.ha_state == "passive")) | length))' <<<"$devs" 2>/dev/null || echo false)"
   if [ "$ok" = "true" ]; then
-    scm_log "upgrade finished: every firewall runs $VERSION, is connected and the pair is active/passive"
-    # The schedule stays enabled with a start time in the past; remove it so it cannot re-fire.
-    scm_api DELETE "$BASE/software-upgrade-schedules/$sid" >/dev/null 2>&1 && scm_log "schedule $sid removed"
-    exit 0
+    scm_log "upgrade finished: every firewall runs $VERSION, is connected and every pair is active/passive"
+    exit 0   # the EXIT trap removes the schedule
   fi
   sleep 60
 done

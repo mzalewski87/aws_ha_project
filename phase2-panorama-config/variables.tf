@@ -304,9 +304,9 @@ variable "fw_trust_gateways" {
 }
 
 variable "guac_rdp_source_cidrs" {
-  description = "Guacamole subnet(s) allowed RDP to the DC via the firewalls (default = the guac /23 in the default mgmt VPC 10.11.0.0/16). Set [] when enable_guacamole = false."
+  description = "Guacamole subnet(s) allowed RDP to the DC via the firewalls, e.g. [\"10.11.20.0/23\"] (the guac /23 in the default mgmt VPC 10.11.0.0/16). Empty (default) = no rule, so an existing path-A deployment without Guacamole is unchanged."
   type        = list(string)
-  default     = ["10.11.20.0/23"]
+  default     = []
 }
 
 variable "dc_private_ip" {

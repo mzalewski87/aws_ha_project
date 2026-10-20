@@ -45,6 +45,11 @@ SUB_ID="${SUB_CA_ID:?SUB_CA_ID required}"
 DOMAIN="${DOMAIN:?DOMAIN required}"
 DA="${DOMAIN_ADMIN:?DOMAIN_ADMIN required}"
 DP="${DOMAIN_PASSWORD:?DOMAIN_PASSWORD required}"
+# Both go inside single-quoted PowerShell strings, where a ' is written ''.
+DA="${DA//\'/\'\'}"
+DP="${DP//\'/\'\'}"
+# Note: RunCommand keeps the command text (including this password) in the SSM command
+# history for its retention period. Use a lab-only domain admin and rotate it afterwards.
 SUB_CN="${SUB_CA_CN:-PANW Lab Issuing CA}"
 ROOT_CN="${CA_ROOT_CN:-PANW Lab Root CA}"
 POLL_MAX="${PKI_POLL_MAX:-1800}"   # how long any single step may run
@@ -66,18 +71,20 @@ run_ps() { # $1 = instance, $2 = powershell, $3 = label, $4 = delivery timeout
   # payload looking for key=value pairs and list indices and falls over on
   # ordinary script text with errors that name nothing in the script
   # ("invalid literal for int() with base 10: 'key'"). A JSON file bypasses it.
-  pfile="/tmp/pki-params-${label}.json"
+  # Private temp file: several payloads embed the domain admin password.
+  pfile="$(umask 077; mktemp "${TMPDIR:-/tmp}/pki-params.XXXXXX")"
   printf '%s' "$ps" | jq -R -s '{commands: (rtrimstr("\n") | split("\n"))}' > "$pfile" || {
-    echo "[pki] could not build the parameter JSON for $label" >&2; exit 1; }
+    rm -f "$pfile"; echo "[pki] could not build the parameter JSON for $label" >&2; exit 1; }
   if ! cid="$(aws ssm send-command --region "$REGION" --instance-ids "$inst" \
         --document-name AWS-RunPowerShellScript \
         --parameters "file://${pfile}" \
         --timeout-seconds "$tmo" \
         --query 'Command.CommandId' --output text 2>&1)"; then
     echo "[pki] send-command failed for $label: $cid" >&2
-    echo "[pki] payload left at $pfile for inspection" >&2
+    if [ -n "${PKI_DEBUG:-}" ]; then echo "[pki] payload kept at $pfile (PKI_DEBUG)" >&2; else rm -f "$pfile"; fi
     exit 1
   fi
+  [ -n "${PKI_DEBUG:-}" ] || rm -f "$pfile"
   # --timeout-seconds bounds DELIVERY, not execution: a command can legitimately
   # run for longer, so poll against our own deadline rather than reusing $tmo.
   local status="" deadline=$(( $(date +%s) + POLL_MAX ))
@@ -189,7 +196,7 @@ shutdown.exe /r /t 20 /f
   say "waiting for the issuing CA to restart"
   sleep 90
   wait_ssm "$SUB_ID" "issuing CA (after join)"
-  joined="$(run_ps "$SUB_ID" "(Get-WmiObject Win32_ComputerSystem).PartOfDomain" "sub-membership2" 120 | tr -d '[:space:]')"
+  joined="$(run_ps "$SUB_ID" "(Get-WmiObject Win32_ComputerSystem).PartOfDomain" "sub-membership2" 600 | tr -d '[:space:]')"
   [ "$joined" = "True" ] || { echo "[pki] issuing CA is still not a domain member" >&2; exit 1; }
 fi
 say "issuing CA is a domain member"

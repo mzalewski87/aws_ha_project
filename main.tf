@@ -36,6 +36,12 @@ resource "terraform_data" "version_guard" {
       condition     = var.management_mode != "panorama" || local._pano_int >= local._fw_int
       error_message = "panorama_version (${var.panorama_version}) must be >= vmseries_version (${var.vmseries_version}). Panorama can manage same-or-older firewalls only, never newer."
     }
+    precondition {
+      # Path B onboards through the auto-registration PIN alone: without it init-cfg has no
+      # PIN, the firewalls never appear in the SCM tenant, yet plan/apply would succeed.
+      condition     = var.management_mode != "scm" || (var.fw_registration_pin_id != "" && var.fw_registration_pin_value != "")
+      error_message = "management_mode = \"scm\" needs fw_registration_pin_id and fw_registration_pin_value (CSP > Assets > Device Certificates > Generate Registration PIN)."
+    }
   }
 }
 
@@ -98,6 +104,7 @@ module "region_a" {
   create_guacamole         = local.guac_on
   create_panel             = local.panel_on
   panel_enable_failover    = var.panel_enable_failover
+  panel_alb_ingress_cidrs  = var.panel_alb_ingress_cidrs
   panel_gp_fqdn            = var.enable_custom_domain ? "${var.custom_domain_portal_hostname}.${var.custom_domain_subdomain_zone}" : ""
   panel_certificate_arn    = local.panel_on ? aws_acm_certificate_validation.panel[0].certificate_arn : ""
   guac_certificate_arn     = local.guac_on ? aws_acm_certificate_validation.guac[0].certificate_arn : ""

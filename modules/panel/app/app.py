@@ -43,11 +43,20 @@ CFG = {
     "netbios": os.environ.get("PANEL_NETBIOS", os.environ["PANEL_DOMAIN"].split(".")[0].upper()),
     "base_dn": os.environ["PANEL_BASE_DN"],
     "group": os.environ.get("PANEL_ADMIN_GROUP", "panel-admins"),
+    # Membership is checked by full DN, not by CN alone: a same-named group in another OU must
+    # not grant access. scripts/panel-setup.sh creates both groups in CN=Users.
     "fw_ips": [x for x in os.environ.get("PANEL_FW_IPS", "").split(",") if x],
     "fw_user": os.environ.get("PANEL_FW_USER", ""),
     "fw_password": os.environ.get("PANEL_FW_PASSWORD", ""),
     "spoke_host": os.environ.get("PANEL_SPOKE_HOST", "10.12.0.10"),
 }
+
+for _k, _cn in (("group_dn", "group"), ("operator_group_dn", "operator_group")):
+    CFG[_k] = os.environ.get("PANEL_" + _k.upper(), f"CN={CFG[_cn]},CN=Users,{CFG['base_dn']}").lower()
+
+SESSION_MAX_AGE = 8 * 3600      # absolute lifetime: polling must not keep a session alive forever
+OPERATOR_FRESH_LOGIN = 3600     # disruptive actions need a sign-in within the last hour
+TIMEOUT_CONNECT = 3             # fail fast on an unreachable firewall (a stopped unit during a test)
 
 app = Flask(__name__)
 app.secret_key = os.environ["PANEL_SESSION_SECRET"]
@@ -57,9 +66,16 @@ limiter = core.RateLimiter(limit=5, window=600)
 _keys = {}  # firewall ip -> (api key, time obtained)
 
 
+def client_ip():
+    """The address the ALB saw. It APPENDS the peer to X-Forwarded-For, so the last entry is the
+    trustworthy one; the first entries are whatever the client sent."""
+    xff = [p.strip() for p in request.headers.get("X-Forwarded-For", "").split(",") if p.strip()]
+    return xff[-1] if xff else (request.remote_addr or "?")
+
+
 def audit(event, **fields):
     rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "event": event,
-           "user": session.get("user"), "ip": request.headers.get("X-Forwarded-For", request.remote_addr)}
+           "user": session.get("user"), "ip": client_ip()}
     rec.update(fields)
     print(json.dumps(rec), file=sys.stdout, flush=True)
 
@@ -71,6 +87,7 @@ def headers(resp):
     resp.headers["Referrer-Policy"] = "no-referrer"
     resp.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'self'"
     resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Strict-Transport-Security"] = "max-age=31536000"
     return resp
 
 
@@ -80,8 +97,18 @@ def csrf_token():
     return session["csrf"]
 
 
-def need_login():
+def logged_in():
+    """A valid session: signed in, and inside the absolute lifetime."""
     if not session.get("user"):
+        return False
+    if time.time() - session.get("login_at", 0) > SESSION_MAX_AGE:
+        session.clear()
+        return False
+    return True
+
+
+def need_login():
+    if not logged_in():
         return redirect(url_for("login"))
     return None
 
@@ -96,6 +123,8 @@ def ad_authenticate(username, password):
 
     "operator" (extra group) may also run the failover tests; "viewer" is read-only.
     """
+    if not password:  # an empty password would be an unauthenticated bind on some servers
+        return None
     server = Server(CFG["ldap_host"], port=389, connect_timeout=5)
     conn = Connection(server, user=f'{CFG["netbios"]}\\{username}', password=password,
                       authentication=NTLM, receive_timeout=8)
@@ -107,12 +136,9 @@ def ad_authenticate(username, password):
             return None
         groups = [str(g).lower() for g in conn.entries[0].memberOf.values]
 
-        def member(name):
-            return any(g.startswith(f"cn={name.lower()},") for g in groups)
-
-        if not member(CFG["group"]):
+        if CFG["group_dn"] not in groups:
             return None
-        return "operator" if member(CFG["operator_group"]) else "viewer"
+        return "operator" if CFG["operator_group_dn"] in groups else "viewer"
     except LDAPException:
         return None
     except Exception as exc:  # fail closed: any other bind problem is a failed sign-in, not a 500
@@ -126,13 +152,23 @@ def fw_call(ip, params, timeout=25):
     """One XML-API request to a firewall with a cached key; returns the answer text."""
     key = _keys.get(ip)
     if not key or time.time() - key[1] > 3000:
-        r = requests.get(f"https://{ip}/api/", timeout=10, verify=False,  # self-signed mgmt cert, private network
-                         params={"type": "keygen", "user": CFG["fw_user"], "password": CFG["fw_password"]})
+        # POST, never GET: a query string ends up in exception texts and in the firewall's access log.
+        r = requests.post(f"https://{ip}/api/", timeout=(TIMEOUT_CONNECT, 10), verify=False,  # self-signed mgmt cert, private network
+                          data={"type": "keygen", "user": CFG["fw_user"], "password": CFG["fw_password"]})
         key = (core.parse_key(r.text), time.time())
         _keys[ip] = key
-    r = requests.post(f"https://{ip}/api/", timeout=timeout, verify=False,
+    r = requests.post(f"https://{ip}/api/", timeout=(TIMEOUT_CONNECT, timeout), verify=False,
                       data={**params, "key": key[0]})
     return r.text
+
+
+def safe_error(exc):
+    """Text for the page. Network errors are summarised (their text can carry URLs and hosts);
+    the details go to the journal only."""
+    if isinstance(exc, requests.RequestException):
+        print(json.dumps({"event": "firewall_error", "error": f"{type(exc).__name__}: {exc}"[:300]}), flush=True)
+        return "firewall unreachable (timeout or connection refused)"
+    return str(exc)[:200]
 
 
 def fw_op(ip, cmd, vsys=None, timeout=25):
@@ -176,13 +212,13 @@ def login():
     error = None
     if request.method == "POST":
         check_csrf()
-        ip = request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
+        ip = client_ip()
         try:
             user = core.valid_username(request.form.get("username", ""))
         except core.ValidationError:
             user = ""
         key = f"{ip}|{user}"
-        if limiter.blocked(key) or limiter.blocked(f"{ip}|*"):
+        if limiter.blocked(key) or limiter.blocked(f"{ip}|*") or limiter.blocked(f"*|{user}"):
             audit("login_blocked", target=user)
             return page("<p class=err>Too many failed attempts. Try again in a few minutes.</p>"), 429
         role = ad_authenticate(user, request.form.get("password", "")) if user else None
@@ -192,10 +228,13 @@ def login():
             session.permanent = True
             session["user"] = user
             session["role"] = role
+            session["login_at"] = time.time()
             audit("login_ok", role=role)
             return redirect(url_for("home"))
         limiter.fail(key)
         limiter.fail(f"{ip}|*")
+        if user:
+            limiter.fail(f"*|{user}")
         audit("login_failed", target=user)
         error = "Sign-in failed."
     return page("""<form method=post class=card><input type=hidden name=csrf value="{{ csrf }}">
@@ -224,7 +263,7 @@ def home():
             row.update(core.parse_info(fw_op(ip, core.INFO_CMD)))
             row.update(core.parse_ha(fw_op(ip, core.HA_CMD)))
         except (core.ValidationError, requests.RequestException) as exc:
-            row["error"] = str(exc)[:160]
+            row["error"] = safe_error(exc)
         rows.append(row)
     audit("view_status")
     return page("""<div class=card><h2>Firewalls</h2><table>
@@ -272,20 +311,20 @@ def build_simulation(ip, args):
     rules, rules_error = [], None
     try:
         allrules = rulebase(ip)
-        upto = matched["index"] if matched and matched["index"] else len(allrules)
+        m = next((r for r in allrules if matched and r["name"] == matched["name"]), None)
+        upto = m["index"] if m else float("inf")
         before = [r for r in allrules if r["index"] < upto]
         for r in before[-30:]:
             rules.append({**r, "verdict": "skip", "reason": core.skip_reason(r, zfrom, zto)})
         hidden = max(0, len(before) - 30)
         if matched:
-            m = next((r for r in allrules if r["name"] == matched["name"]), None)
             rules.append({**(m or matched), "verdict": "match", "reason": "first rule whose criteria all match"})
             if not matched["action"] and m:
                 matched["action"] = m["action"]
         after = [r for r in allrules if r["index"] > upto][:2]
         rules += [{**r, "verdict": "unused", "reason": "not evaluated (a rule above already matched)"} for r in after]
     except (core.ValidationError, requests.RequestException) as exc:
-        hidden, rules_error = 0, str(exc)[:160]
+        hidden, rules_error = 0, safe_error(exc)
     proto_name = {v: k for k, v in core.PROTOCOLS.items()}.get(proto, proto)
     return {"src": src, "dst": dst, "port": port, "proto": proto_name, "zfrom": zfrom, "zto": zto,
             "firewall": ip, "matched": matched, "rules": rules, "hidden_before": hidden,
@@ -330,7 +369,7 @@ def simulate():
                 m = ctx["sim"]["matched"] or {}
                 audit("policy_match", src=args[0], dst=args[1], port=args[2], rule=m.get("name"), action=m.get("action"))
         except (core.ValidationError, requests.RequestException) as exc:
-            ctx["error"] = str(exc)[:200]
+            ctx["error"] = safe_error(exc)
     return page("""<div class=card><h2>Which rule would this session hit?</h2>
 <p>Asks the active firewall to <em>simulate</em> a session. <b>No traffic is sent</b>, so it is safe to use a known-bad address.</p>
 <form method=post><input type=hidden name=csrf value="{{ csrf }}">
@@ -362,13 +401,19 @@ The first one is now in the form above (zones set to match); press Simulate.</p>
 
 # ---- failover tests ------------------------------------------------------------------------
 _boto = {}
+_boto_lock = threading.Lock()  # creating boto3 clients from several threads at once is not safe
+
+
+def aws_client(service):
+    with _boto_lock:
+        if service not in _boto:
+            import boto3
+            _boto[service] = boto3.client(service, region_name=CFG["region"] or None)
+        return _boto[service]
 
 
 def ec2_client():
-    if "ec2" not in _boto:
-        import boto3
-        _boto["ec2"] = boto3.client("ec2", region_name=CFG["region"] or None)
-    return _boto["ec2"]
+    return aws_client("ec2")
 
 
 def units():
@@ -405,21 +450,29 @@ class Ec2Api:
         ec2_client().start_instances(InstanceIds=[units()[unit]["id"]])
 
 
-class RunStore:
-    """Runs in DynamoDB, so both hosts show the same progress and the history survives host swaps."""
+class StoreError(Exception):
+    """The run store could not be read or written; disruptive tests must not start."""
 
-    STALE = 90  # a 'running' record not updated for this long belongs to a host that went away
+
+class RunStore:
+    """Runs in DynamoDB, so both hosts show the same progress and the history survives host swaps.
+
+    One item per run, plus a LEASE item ("lease") taken with a conditional write: it is what
+    really enforces "one test at a time" across both hosts. The running host renews it (and the
+    run's `updated` time) every HEARTBEAT seconds; a lease or run not renewed for STALE seconds
+    belongs to a host that went away.
+    """
+
+    HEARTBEAT = 15
+    STALE = 90
+    LEASE = "lease"
 
     def __init__(self, table):
         self.table = table
-        self._client = None
         self._last = {}
 
     def client(self):
-        if self._client is None:
-            import boto3
-            self._client = boto3.client("dynamodb", region_name=CFG["region"] or None)
-        return self._client
+        return aws_client("dynamodb")
 
     def put(self, doc, force=False):
         if not self.table:
@@ -435,6 +488,56 @@ class RunStore:
         except Exception as exc:  # never break a running test because of the history
             print(json.dumps({"event": "store_error", "error": str(exc)[:200]}), flush=True)
 
+    def take_lease(self, run_id, user):
+        """True if this run got the lease; False if another fresh run holds it. Raises StoreError."""
+        if not self.table:
+            return True
+        now = time.time()
+        try:
+            self.client().put_item(
+                TableName=self.table,
+                Item={"id": {"S": self.LEASE}, "run": {"S": run_id}, "user": {"S": user},
+                      "expires": {"N": str(now + self.STALE)}},
+                ConditionExpression="attribute_not_exists(id) OR expires < :now",
+                ExpressionAttributeValues={":now": {"N": str(now)}})
+            return True
+        except Exception as exc:
+            if type(exc).__name__ == "ConditionalCheckFailedException":
+                return False
+            raise StoreError(str(exc)[:200])
+
+    def renew_lease(self, run_id):
+        if not self.table:
+            return
+        try:
+            self.client().update_item(
+                TableName=self.table, Key={"id": {"S": self.LEASE}},
+                UpdateExpression="SET expires = :e", ConditionExpression="run = :r",
+                ExpressionAttributeValues={":e": {"N": str(time.time() + self.STALE)}, ":r": {"S": run_id}})
+        except Exception as exc:
+            print(json.dumps({"event": "store_error", "error": str(exc)[:200]}), flush=True)
+
+    def release_lease(self, run_id):
+        if not self.table:
+            return
+        try:
+            self.client().delete_item(
+                TableName=self.table, Key={"id": {"S": self.LEASE}}, ConditionExpression="run = :r",
+                ExpressionAttributeValues={":r": {"S": run_id}})
+        except Exception as exc:
+            print(json.dumps({"event": "store_error", "error": str(exc)[:200]}), flush=True)
+
+    def lease_holder(self):
+        if not self.table:
+            return None
+        try:
+            it = self.client().get_item(TableName=self.table, Key={"id": {"S": self.LEASE}}).get("Item")
+        except Exception as exc:
+            raise StoreError(str(exc)[:200])
+        if it and float(it["expires"]["N"]) > time.time():
+            return it["user"]["S"]
+        return None
+
     def recent(self, limit=20):
         if not self.table:
             return []
@@ -443,7 +546,7 @@ class RunStore:
             while True:
                 r = self.client().scan(**kwargs)
                 items += r.get("Items", [])
-                if "LastEvaluatedKey" not in r or len(items) > 500:
+                if "LastEvaluatedKey" not in r:
                     break
                 kwargs["ExclusiveStartKey"] = r["LastEvaluatedKey"]
         except Exception as exc:
@@ -451,6 +554,8 @@ class RunStore:
             return []
         docs = []
         for it in items:
+            if it["id"]["S"] == self.LEASE or "doc" not in it:
+                continue
             doc = json.loads(it["doc"]["S"])
             if doc["status"] == "running" and time.time() - float(it["updated"]["N"]) > self.STALE:
                 doc["status"] = "interrupted"
@@ -465,7 +570,7 @@ RUN_LOCK = threading.Lock()
 
 def gp_check():
     try:
-        r = requests.get(f"https://{CFG['gp_fqdn']}/global-protect/prelogin.esp", timeout=3)
+        r = requests.get(f"https://{CFG['gp_fqdn']}/global-protect/prelogin.esp", timeout=(3, 3))
         return r.status_code == 200 and "Success" in r.text
     except requests.RequestException:
         return False
@@ -478,8 +583,10 @@ def job_doc(job, probe):
     return doc
 
 
-def start_job(scenario, user, ip, restore):
-    job = fo.Job(scenario, user, phases=fo.phases_for(scenario, restore), options={"restore": restore})
+def start_job(scenario, user, ip, restore, run_id=None):
+    """Start a run in background threads. The caller must already hold the store lease for run_id."""
+    job = fo.Job(scenario, user, phases=fo.phases_for(scenario, restore), options={"restore": restore},
+                 run_id=run_id)
     probe = fo.ProbeStats(base=job.started)
     stop = threading.Event()
     ctx = fo.Ctx(HttpApi(), Ec2Api(), job, sorted(units()))
@@ -490,10 +597,16 @@ def start_job(scenario, user, ip, restore):
             probe.record(gp_check())
             stop.wait(1)
 
+    def heartbeat():
+        # Long waits (a firewall booting: up to 20 min) log nothing; without this the run would
+        # look stale to the other host and a second test could start in the middle of it.
+        while not stop.wait(STORE.HEARTBEAT):
+            STORE.renew_lease(job.id)
+            STORE.put(job_doc(job, probe), force=True)
+
     def runner():
         try:
             fo.run_job(ctx, fo.SCENARIOS[scenario][1])
-        finally:
             # The HA roles can settle before the portal answers again (seen live: a failback
             # finished while the portal was still down). Keep probing until it is back, at most
             # 120 s, so the measured outage is the real one.
@@ -503,9 +616,12 @@ def start_job(scenario, user, ip, restore):
                     time.sleep(1)
                 if not probe.summary()["down_now"] and probe.outages:
                     job.mark("portal reachable again")
+        finally:
+            job.finished = job.clock()  # after the probe wait, so the timeline covers it
             stop.set()
             job.result["probe"] = {k: v for k, v in probe.summary().items() if k != "outages"}
             STORE.put(job_doc(job, probe), force=True)
+            STORE.release_lease(job.id)
             print(json.dumps({"event": "failover_finished", "user": user, "ip": ip, "scenario": scenario,
                               "status": job.status, "result": job.result}), flush=True)
 
@@ -513,29 +629,37 @@ def start_job(scenario, user, ip, restore):
     STORE.put(job_doc(job, probe), force=True)
     if CFG["gp_fqdn"]:
         threading.Thread(target=prober, daemon=True).start()
+    threading.Thread(target=heartbeat, daemon=True).start()
     threading.Thread(target=runner, daemon=True).start()
-
-
-def running_elsewhere():
-    latest = STORE.recent(1)
-    return latest[0] if latest and latest[0]["status"] == "running" else None
+    return job
 
 
 class Topology:
-    """Live picture of the pair: HA roles, EC2 state, who holds the public EIP, who gets the routes."""
+    """Live picture of the pair: HA roles, EC2 state, who holds the public EIP, who gets the routes.
+
+    Single-flight: one build at a time, everyone else gets the cached picture. Without it every
+    poll from every open tab started its own build, and during a hard failover (a unit timing
+    out) the 8 worker threads all hung on firewall calls.
+    """
 
     def __init__(self):
-        self._lock = threading.Lock()
+        self._build_lock = threading.Lock()
         self._cache = (0.0, None)
 
     def get(self):
-        with self._lock:
-            if time.time() - self._cache[0] < 2 and self._cache[1] is not None:
-                return self._cache[1]
-        data = self._build()
-        with self._lock:
-            self._cache = (time.time(), data)
-        return data
+        ts, data = self._cache
+        if data is not None and time.time() - ts < 2:
+            return data
+        if not self._build_lock.acquire(blocking=data is None):
+            return data  # another thread is refreshing: serve the previous picture
+        try:
+            ts, data = self._cache
+            if data is None or time.time() - ts >= 2:
+                data = self._build()
+                self._cache = (time.time(), data)
+            return data
+        finally:
+            self._build_lock.release()
 
     def _build(self):
         topo, errors = CFG["topo"], []
@@ -570,7 +694,9 @@ class Topology:
                             out["routes"].append({"table": name, "dest": route.get("DestinationCidrBlock", ""),
                                                   "unit": trust[route["NetworkInterfaceId"]]})
         except Exception as exc:
-            errors.append(f"AWS: {type(exc).__name__}: {exc}"[:200])
+            # Details (account id, role ARN in an AccessDenied) go to the journal, not to viewers.
+            print(json.dumps({"event": "topology_error", "error": f"{type(exc).__name__}: {exc}"[:300]}), flush=True)
+            errors.append(f"AWS lookup failed ({type(exc).__name__}).")
         job = RUN["job"]
         if job is not None and job.status == "running" and RUN["probe"] is not None:
             out["gp_up"] = not RUN["probe"].summary()["down_now"]
@@ -585,14 +711,14 @@ TOPOLOGY = Topology()
 
 @app.get("/failover/topology")
 def failover_topology():
-    if not session.get("user"):
+    if not logged_in():
         abort(401)
     return jsonify(TOPOLOGY.get())
 
 
 @app.get("/failover/status")
 def failover_status():
-    if not session.get("user"):
+    if not logged_in():
         abort(401)
     job = RUN["job"]
     if job is not None and (job.status == "running" or not CFG["runs_table"]):
@@ -605,7 +731,7 @@ def failover_status():
 
 @app.get("/failover/history")
 def failover_history():
-    if not session.get("user"):
+    if not logged_in():
         abort(401)
     rows = []
     for d in STORE.recent(25):
@@ -636,17 +762,24 @@ def failover():
             message = "Unknown test."
         elif request.form.get("confirm", "") != "FAILOVER":
             message = "Type FAILOVER in the confirmation box to start."
+        elif time.time() - session.get("login_at", 0) > OPERATOR_FRESH_LOGIN:
+            # Group membership is read at sign-in; a fresh sign-in picks up AD changes.
+            message = "For disruptive tests please sign out and sign in again (last sign-in is over an hour old)."
         else:
             with RUN_LOCK:
-                local = RUN["job"] is not None and RUN["job"].status == "running"
-                other = None if local else running_elsewhere()
-                if local or other:
-                    message = "A test is already running" + ("" if local else f" (started by {other['user']})") + "."
-                else:
-                    audit("failover_start", scenario=scenario, restore=restore)
-                    start_job(scenario, session["user"],
-                              request.headers.get("X-Forwarded-For", request.remote_addr), restore)
-                    message = "Started. Progress appears below."
+                try:
+                    local = RUN["job"] is not None and RUN["job"].status == "running"
+                    run_id = f"{int(time.time())}-{scenario}"
+                    if local or not STORE.take_lease(run_id, session["user"]):
+                        holder = None if local else STORE.lease_holder()
+                        message = "A test is already running" + (f" (started by {holder})" if holder else "") + "."
+                    else:
+                        audit("failover_start", scenario=scenario, restore=restore)
+                        start_job(scenario, session["user"], client_ip(), restore, run_id)
+                        message = "Started. Progress appears below."
+                except StoreError as exc:
+                    print(json.dumps({"event": "store_error", "error": str(exc)}), flush=True)
+                    message = "The run store is unavailable, so a test cannot be started safely. Try again later."
     meta = {"enabled": enabled, "operator": operator, "public_ip": CFG["topo"].get("public_ip", ""),
             "scenarios": {k: {"label": v[0], "typical": v[3], "restore": v[4], "phases": v[2]}
                           for k, v in fo.SCENARIOS.items()}}

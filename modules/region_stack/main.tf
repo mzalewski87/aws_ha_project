@@ -294,8 +294,10 @@ module "guacamole" {
 
   tags = var.tags
 
-  # The DC and the TGW/FW path must exist before users can use the gateway.
-  depends_on = [module.routing]
+  # No module-level depends_on on module.routing: it defers this module's data sources to
+  # apply time whenever routing has any pending change, which makes user_data "known after
+  # apply" and REPLACES the host (wiping Guacamole's database). Users reach the DC only after
+  # the whole deployment anyway.
 }
 
 # --- Admin panel (read-only; HA state + policy simulation) -------------------
@@ -316,7 +318,8 @@ module "panel" {
 
   # Failover tests: the panel may stop/start exactly these two instances (IAM) and run HA
   # suspend/restore on them (XML API). Probes the GP portal to measure the outage.
-  enable_failover = var.panel_enable_failover
+  enable_failover   = var.panel_enable_failover
+  alb_ingress_cidrs = var.panel_alb_ingress_cidrs
   fw_map = { for k, ip in module.firewall.mgmt_private_ips : k => {
     ip          = ip
     id          = module.firewall.instance_ids[k]
@@ -329,7 +332,7 @@ module "panel" {
 
   tags = var.tags
 
-  depends_on = [module.routing]
+  # (no depends_on on module.routing: see the Guacamole module above)
 }
 
 # --- Firewalls (Active/Passive HA) ------------------------------------------

@@ -67,7 +67,13 @@ ha_body() {
 
 apply_ha() {
   local dev="$1" body="$2"
-  if scm_api GET "/config/device/v1/ha-configurations?device=${dev}" >/dev/null 2>&1; then
+  local cur
+  # Live: a device with no HA config answers HTTP 500 (CH_0001), not 404. Also treat a 200 with
+  # an empty body/list as "no config", so a create is never turned into a failing update.
+  if cur="$(scm_api GET "/config/device/v1/ha-configurations?device=${dev}" 2>/dev/null)" \
+     && jq -e 'if type == "array" then length > 0
+               elif (type == "object" and has("data")) then (.data | length) > 0
+               else (type == "object" and (has("group") or has("device"))) end' >/dev/null 2>&1 <<<"$cur"; then
     scm_log "device $dev already has an HA config -> updating"
     scm_api PUT "/config/device/v1/ha-configurations" "$body" >/dev/null
   else

@@ -75,4 +75,9 @@ resource "aws_instance" "jumphost" {
   }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-ssm-jumphost" })
+
+  # Always-latest AMI parameter: a new AL2023 release must not replace the jump host.
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }
