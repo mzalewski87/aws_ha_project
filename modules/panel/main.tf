@@ -135,7 +135,7 @@ resource "aws_iam_role_policy" "secret" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
-      Resource = aws_secretsmanager_secret.panel.arn
+      Resource = [aws_secretsmanager_secret.panel.arn, aws_secretsmanager_secret.app.arn]
     }]
   })
 }
@@ -177,11 +177,25 @@ resource "aws_iam_instance_profile" "host" {
 # --- Hosts: one per AZ -------------------------------------------------------
 locals {
   base_dn = join(",", [for p in split(".", var.domain_name) : "DC=${p}"])
-  app_files = {
+
+  # The application code travels in a second secret, not in user_data: EC2 caps user_data at
+  # 16 KB and the Python files alone exceed it. The host fetches it with its instance role.
+  app_bundle = jsonencode({
     "app.py"           = file("${path.module}/app/app.py")
     "panel_core.py"    = file("${path.module}/app/panel_core.py")
     "failover_core.py" = file("${path.module}/app/failover_core.py")
-  }
+  })
+}
+
+resource "aws_secretsmanager_secret" "app" {
+  name                    = "${var.name_prefix}-panel-app"
+  recovery_window_in_days = 0
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret_version" "app" {
+  secret_id     = aws_secretsmanager_secret.app.id
+  secret_string = local.app_bundle
 }
 
 resource "aws_instance" "panel" {
@@ -217,15 +231,14 @@ resource "aws_instance" "panel" {
     fw_map_b64     = base64encode(jsonencode(var.enable_failover ? var.fw_map : {}))
     operator_group = var.operator_group
     gp_fqdn        = var.gp_portal_fqdn
-    app_b64        = base64gzip(local.app_files["app.py"])
-    core_b64       = base64gzip(local.app_files["panel_core.py"])
-    failover_b64   = base64gzip(local.app_files["failover_core.py"])
+    app_secret_id  = aws_secretsmanager_secret.app.id
+    app_sha        = sha256(local.app_bundle) # new code => new user_data => the hosts are replaced
   })
   user_data_replace_on_change = true
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-panel-${count.index + 1}" })
 
-  depends_on = [aws_secretsmanager_secret_version.panel]
+  depends_on = [aws_secretsmanager_secret_version.panel, aws_secretsmanager_secret_version.app]
 }
 
 # --- ALB --------------------------------------------------------------------

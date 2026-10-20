@@ -6,9 +6,9 @@ exec > >(tee /var/log/panel-bootstrap.log) 2>&1
 
 dnf install -y python3-pip jq
 mkdir -p /opt/panel
-echo "${app_b64}" | base64 -d | gunzip > /opt/panel/app.py
-echo "${core_b64}" | base64 -d | gunzip > /opt/panel/panel_core.py
-echo "${failover_b64}" | base64 -d | gunzip > /opt/panel/failover_core.py
+# app code revision: ${app_sha}
+APP=$(aws secretsmanager get-secret-value --region "${region}" --secret-id "${app_secret_id}" --query SecretString --output text)
+for f in app.py panel_core.py failover_core.py; do echo "$APP" | jq -r --arg f "$f" '.[$f]' > "/opt/panel/$f"; done
 python3 -m venv /opt/panel/venv
 /opt/panel/venv/bin/pip install --quiet flask gunicorn requests ldap3 pycryptodome boto3  # pycryptodome: MD4 for NTLM (OpenSSL 3 dropped it)
 
