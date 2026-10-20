@@ -386,7 +386,7 @@ cd phase2-scm-config && terraform apply
 
 # one-off: the AD group and the read-only firewall admin (see the header of the script)
 AWS_REGION=eu-central-1 DC_INSTANCE_ID=... DOMAIN_ADMIN_USER=... DOMAIN_ADMIN_PASSWORD=... \
-  PANEL_USERS="gpuser" bash scripts/panel-setup.sh ad
+  PANEL_USERS="admin" bash scripts/panel-setup.sh ad   # AD accounts only; gpuser is a local firewall user
 AWS_REGION=eu-central-1 JUMP_INSTANCE_ID=... PANEL_SECRET_ARN=$(terraform output -raw panel_secret_arn) \
   FW_IPS="10.10.0.x 10.10.1.x" FW_ADMIN_USER=... FW_ADMIN_PASSWORD=... bash scripts/panel-setup.sh fw
 ```
