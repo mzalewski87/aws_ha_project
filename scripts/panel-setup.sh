@@ -14,6 +14,7 @@
 #   ad:  DC_INSTANCE_ID   (root output dc_instance_id)
 #        DOMAIN_ADMIN_USER / DOMAIN_ADMIN_PASSWORD   (AD admin; used for the scheduled task)
 #        PANEL_USERS      space-separated sAMAccountNames to add to the group
+#        optional PANEL_OPERATORS  accounts that may also run failover tests (group panel-operators)
 #        optional PANEL_GROUP (default panel-admins), DOMAIN (default panw.labs)
 #   fw:  JUMP_INSTANCE_ID  (root output ssm_jumphost_instance_id)
 #        PANEL_SECRET_ARN  (root output panel_secret_arn)
@@ -30,17 +31,23 @@ die() { echo "[panel] ERROR: $*" >&2; pkill -f 'session-manager-plugin.*22443' 2
 
 ad_step() {
   : "${DC_INSTANCE_ID:?}" "${DOMAIN_ADMIN_USER:?}" "${DOMAIN_ADMIN_PASSWORD:?}" "${PANEL_USERS:?}"
-  local group="${PANEL_GROUP:-panel-admins}" domain="${DOMAIN:-panw.labs}" users="" u
-  for u in $PANEL_USERS; do
+  # PANEL_USERS may sign in (read-only views). PANEL_OPERATORS may also run failover tests;
+  # they are put into BOTH groups, because the panel requires the first for any access.
+  local group="${PANEL_GROUP:-panel-admins}" opgroup="${PANEL_OPERATOR_GROUP:-panel-operators}"
+  local domain="${DOMAIN:-panw.labs}" users="" ops="" u
+  for u in $PANEL_USERS ${PANEL_OPERATORS:-}; do
     [[ "$u" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "invalid user name: $u"
     users="${users}'${u}',"
   done
-  users="${users%,}"
+  for u in ${PANEL_OPERATORS:-}; do ops="${ops}'${u}',"; done
+  users="${users%,}"; ops="${ops%,}"
   local ps pfile cid status
   ps="\$ErrorActionPreference='Stop'
-if (-not (Get-ADGroup -Filter \"Name -eq '${group}'\")) { New-ADGroup -Name '${group}' -GroupScope Global -GroupCategory Security }
+foreach (\$g in @('${group}','${opgroup}')) { if (-not (Get-ADGroup -Filter \"Name -eq '\$g'\")) { New-ADGroup -Name \$g -GroupScope Global -GroupCategory Security } }
 foreach (\$u in @(${users})) { Add-ADGroupMember -Identity '${group}' -Members \$u }
-'members: ' + ((Get-ADGroupMember '${group}' | ForEach-Object SamAccountName) -join ',')"
+foreach (\$u in @(${ops:-})) { Add-ADGroupMember -Identity '${opgroup}' -Members \$u }
+'${group}: ' + ((Get-ADGroupMember '${group}' | ForEach-Object SamAccountName) -join ',')
+'${opgroup}: ' + ((Get-ADGroupMember '${opgroup}' | ForEach-Object SamAccountName) -join ',')"
   pfile="$(mktemp)"
   printf '%s' "$ps" | jq -R -s '{commands: (rtrimstr("\n") | split("\n"))}' > "$pfile"
   cid="$(aws ssm send-command --region "$REGION" --instance-ids "$DC_INSTANCE_ID" \
@@ -56,7 +63,7 @@ foreach (\$u in @(${users})) { Add-ADGroupMember -Identity '${group}' -Members \
   aws ssm get-command-invocation --region "$REGION" --command-id "$cid" --instance-id "$DC_INSTANCE_ID" \
     --query '[Status,StandardOutputContent,StandardErrorContent]' --output text
   [ "$status" = "Success" ] || die "the group step ended as $status"
-  say "group ${group} ready on the domain controller"
+  say "groups ${group} and ${opgroup} ready on the domain controller"
 }
 
 fw_api() {  # $1 = local port; rest = curl --data-urlencode args

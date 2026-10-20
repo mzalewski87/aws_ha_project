@@ -140,6 +140,34 @@ resource "aws_iam_role_policy" "secret" {
   })
 }
 
+data "aws_caller_identity" "current" {}
+
+# Failover tests: the ONLY EC2 rights of the panel. Describe is not resource-scoped by AWS;
+# stop/start are limited to the firewall instances themselves.
+resource "aws_iam_role_policy" "failover" {
+  count = var.enable_failover ? 1 : 0
+  name  = "failover-tests-firewalls-only"
+  role  = aws_iam_role.host.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["ec2:DescribeInstances"]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = ["ec2:StopInstances", "ec2:StartInstances"]
+        Resource = [
+          for u in values(var.fw_map) :
+          "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:instance/${u.id}"
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "host" {
   name = "${var.name_prefix}-panel"
   role = aws_iam_role.host.name
@@ -150,8 +178,9 @@ resource "aws_iam_instance_profile" "host" {
 locals {
   base_dn = join(",", [for p in split(".", var.domain_name) : "DC=${p}"])
   app_files = {
-    "app.py"        = file("${path.module}/app/app.py")
-    "panel_core.py" = file("${path.module}/app/panel_core.py")
+    "app.py"           = file("${path.module}/app/app.py")
+    "panel_core.py"    = file("${path.module}/app/panel_core.py")
+    "failover_core.py" = file("${path.module}/app/failover_core.py")
   }
 }
 
@@ -184,8 +213,13 @@ resource "aws_instance" "panel" {
     admin_group = var.admin_group
     fw_ips      = join(",", var.fw_mgmt_ips)
     spoke_host  = var.spoke_host
-    app_b64     = base64gzip(local.app_files["app.py"])
-    core_b64    = base64gzip(local.app_files["panel_core.py"])
+    # Failover tests (empty map = disabled; the app then hides the controls).
+    fw_map_b64     = base64encode(jsonencode(var.enable_failover ? var.fw_map : {}))
+    operator_group = var.operator_group
+    gp_fqdn        = var.gp_portal_fqdn
+    app_b64        = base64gzip(local.app_files["app.py"])
+    core_b64       = base64gzip(local.app_files["panel_core.py"])
+    failover_b64   = base64gzip(local.app_files["failover_core.py"])
   })
   user_data_replace_on_change = true
 

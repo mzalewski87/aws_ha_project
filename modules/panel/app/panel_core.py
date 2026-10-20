@@ -100,6 +100,9 @@ def edl_show_cmd(name: str) -> str:
 
 
 HA_CMD = "<show><high-availability><state/></high-availability></show>"
+# Failover tests (operators only). Fixed strings: nothing from a form ever reaches them.
+HA_SUSPEND_CMD = "<request><high-availability><state><suspend/></state></high-availability></request>"
+HA_FUNCTIONAL_CMD = "<request><high-availability><state><functional/></state></high-availability></request>"
 INFO_CMD = "<show><system><info/></system></show>"
 
 

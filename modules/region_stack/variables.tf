@@ -272,3 +272,14 @@ variable "panel_certificate_arn" {
   type        = string
   default     = ""
 }
+
+variable "panel_enable_failover" {
+  description = "Let panel operators run failover tests (adds an IAM role limited to stop/start of the firewall instances)."
+  type        = bool
+  default     = false
+}
+variable "panel_gp_fqdn" {
+  description = "GlobalProtect portal FQDN the panel probes during failover tests."
+  type        = string
+  default     = ""
+}

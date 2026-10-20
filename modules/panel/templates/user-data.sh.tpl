@@ -8,8 +8,9 @@ dnf install -y python3-pip jq
 mkdir -p /opt/panel
 echo "${app_b64}" | base64 -d | gunzip > /opt/panel/app.py
 echo "${core_b64}" | base64 -d | gunzip > /opt/panel/panel_core.py
+echo "${failover_b64}" | base64 -d | gunzip > /opt/panel/failover_core.py
 python3 -m venv /opt/panel/venv
-/opt/panel/venv/bin/pip install --quiet flask gunicorn requests ldap3 pycryptodome  # pycryptodome: MD4 for NTLM (OpenSSL 3 dropped it)
+/opt/panel/venv/bin/pip install --quiet flask gunicorn requests ldap3 pycryptodome boto3  # pycryptodome: MD4 for NTLM (OpenSSL 3 dropped it)
 
 SECRET=$(aws secretsmanager get-secret-value --region "${region}" --secret-id "${secret_id}" --query SecretString --output text)
 umask 077
@@ -21,6 +22,10 @@ PANEL_BASE_DN=${base_dn}
 PANEL_ADMIN_GROUP=${admin_group}
 PANEL_FW_IPS=${fw_ips}
 PANEL_SPOKE_HOST=${spoke_host}
+PANEL_FW_MAP_B64=${fw_map_b64}
+PANEL_OPERATOR_GROUP=${operator_group}
+PANEL_GP_FQDN=${gp_fqdn}
+AWS_DEFAULT_REGION=${region}
 PANEL_FW_USER=$(echo "$SECRET" | jq -r .fw_user)
 PANEL_FW_PASSWORD=$(echo "$SECRET" | jq -r .fw_password)
 PANEL_SESSION_SECRET=$(echo "$SECRET" | jq -r .session_secret)

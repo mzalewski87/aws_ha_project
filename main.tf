@@ -97,6 +97,8 @@ module "region_a" {
   dc_domain_name           = var.dc_domain_name
   create_guacamole         = local.guac_on
   create_panel             = local.panel_on
+  panel_enable_failover    = var.panel_enable_failover
+  panel_gp_fqdn            = var.enable_custom_domain ? "${var.custom_domain_portal_hostname}.${var.custom_domain_subdomain_zone}" : ""
   panel_certificate_arn    = local.panel_on ? aws_acm_certificate_validation.panel[0].certificate_arn : ""
   guac_certificate_arn     = local.guac_on ? aws_acm_certificate_validation.guac[0].certificate_arn : ""
   guac_rdp_username        = var.guac_rdp_username

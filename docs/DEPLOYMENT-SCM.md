@@ -391,6 +391,24 @@ AWS_REGION=eu-central-1 JUMP_INSTANCE_ID=... PANEL_SECRET_ARN=$(terraform output
   FW_IPS="10.10.0.x 10.10.1.x" FW_ADMIN_USER=... FW_ADMIN_PASSWORD=... bash scripts/panel-setup.sh fw
 ```
 
+Failover tests (page "Failover tests", `panel_enable_failover = true` by default): an AD account that
+is in `panel-operators` (and `panel-admins`) can run
+- **soft HA failover**: `request high-availability state suspend` on the active unit, wait for the
+  peer to take over, then `functional` again;
+- **hard failover**: stop the active unit's EC2 instance, wait for the takeover, start it again and
+  wait until it is passive and synchronized;
+- **recover**: start a stopped firewall / clear a suspended state after an interrupted run.
+
+While a test runs, the panel probes the GlobalProtect portal every second and shows the takeover
+time and how long the portal was unreachable. The panel itself runs in the management VPC in two
+AZs, outside the firewall path, so it stays up. Guard rails: operators only, a typed confirmation,
+one test at a time per host, refusal to start unless the pair is a clean synchronized
+active/passive pair, every step has a timeout, every start/finish is an audit line. The hosts'
+IAM role can only `ec2:StopInstances`/`StartInstances` on the two firewall instances (plus
+`DescribeInstances`). Create the operator group with `PANEL_OPERATORS="admin" ... panel-setup.sh ad`.
+Progress lives in the memory of the host that started the test (the ALB is sticky); if that host
+is replaced mid-test use "Recover" from the other one.
+
 Known limits: the AD bind is NTLM over plain LDAP (not LDAPS) because the DC has no machine
 certificate yet — the password is not sent in clear, but the exchange is not encrypted; the
 rule matches App-ID `ldap` (if the firewall classes the NTLM bind differently the login times out

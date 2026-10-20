@@ -314,6 +314,12 @@ module "panel" {
   domain_name = var.dc_domain_name
   fw_mgmt_ips = sort(values(module.firewall.mgmt_private_ips))
 
+  # Failover tests: the panel may stop/start exactly these two instances (IAM) and run HA
+  # suspend/restore on them (XML API). Probes the GP portal to measure the outage.
+  enable_failover = var.panel_enable_failover
+  fw_map          = { for k, ip in module.firewall.mgmt_private_ips : k => { ip = ip, id = module.firewall.instance_ids[k] } }
+  gp_portal_fqdn  = var.panel_gp_fqdn
+
   tags = var.tags
 
   depends_on = [module.routing]

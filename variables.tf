@@ -416,3 +416,9 @@ variable "panel_hostname" {
   type        = string
   default     = "panel"
 }
+
+variable "panel_enable_failover" {
+  description = "Let panel operators (AD group panel-operators) run failover tests from the panel. Adds an IAM role that can stop/start ONLY the two firewall instances of the pair."
+  type        = bool
+  default     = true
+}

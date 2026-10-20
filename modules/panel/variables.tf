@@ -60,3 +60,23 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+variable "enable_failover" {
+  description = "Allow operators to run failover tests from the panel. Gives the hosts an IAM role that can stop/start ONLY the firewall instances in fw_map."
+  type        = bool
+  default     = false
+}
+variable "fw_map" {
+  description = "Firewall units by name: management IP (XML API) and EC2 instance id (failover tests)."
+  type        = map(object({ ip = string, id = string }))
+  default     = {}
+}
+variable "operator_group" {
+  description = "AD group whose members (who must also be in admin_group) may run failover tests."
+  type        = string
+  default     = "panel-operators"
+}
+variable "gp_portal_fqdn" {
+  description = "GlobalProtect portal FQDN probed during failover tests to measure the outage. Empty = no probe."
+  type        = string
+  default     = ""
+}

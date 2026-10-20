@@ -11,21 +11,29 @@ Deliberately small and read-only:
 Nothing here changes configuration or touches AWS. Every action is written to the audit log
 (one JSON line per event on stdout).
 """
+import base64
 import json
 import os
 import secrets
 import sys
+import threading
 import time
 
 import requests
-from flask import Flask, abort, redirect, render_template_string, request, session, url_for
+from flask import Flask, Response, abort, jsonify, redirect, render_template_string, request, session, url_for
 from ldap3 import NTLM, Connection, Server
 from ldap3.core.exceptions import LDAPException
 from ldap3.utils.conv import escape_filter_chars
 
+import failover_core as fo
 import panel_core as core
 
 CFG = {
+    # Failover tests (operators only): {"fw1": {"ip": "...", "id": "i-..."}, ...}. Empty = disabled.
+    "fw_map": json.loads(base64.b64decode(os.environ.get("PANEL_FW_MAP_B64", "") or "e30=").decode()),
+    "operator_group": os.environ.get("PANEL_OPERATOR_GROUP", "panel-operators"),
+    "gp_fqdn": os.environ.get("PANEL_GP_FQDN", ""),
+    "region": os.environ.get("AWS_DEFAULT_REGION", ""),
     "ldap_host": os.environ["PANEL_LDAP_HOST"],
     "domain": os.environ["PANEL_DOMAIN"],  # e.g. panw.labs
     "netbios": os.environ.get("PANEL_NETBIOS", os.environ["PANEL_DOMAIN"].split(".")[0].upper()),
@@ -80,23 +88,32 @@ def check_csrf():
 
 
 def ad_authenticate(username, password):
-    """True only for a valid AD account that is a member of the admin group."""
+    """None unless a valid AD account in the admin group; then "operator" or "viewer".
+
+    "operator" (extra group) may also run the failover tests; "viewer" is read-only.
+    """
     server = Server(CFG["ldap_host"], port=389, connect_timeout=5)
     conn = Connection(server, user=f'{CFG["netbios"]}\\{username}', password=password,
                       authentication=NTLM, receive_timeout=8)
     try:
         if not conn.bind():
-            return False
+            return None
         conn.search(CFG["base_dn"], f"(sAMAccountName={escape_filter_chars(username)})", attributes=["memberOf"])
         if not conn.entries:
-            return False
+            return None
         groups = [str(g).lower() for g in conn.entries[0].memberOf.values]
-        return any(g.startswith(f'cn={CFG["group"].lower()},') for g in groups)
+
+        def member(name):
+            return any(g.startswith(f"cn={name.lower()},") for g in groups)
+
+        if not member(CFG["group"]):
+            return None
+        return "operator" if member(CFG["operator_group"]) else "viewer"
     except LDAPException:
-        return False
+        return None
     except Exception as exc:  # fail closed: any other bind problem is a failed sign-in, not a 500
         print(json.dumps({"event": "ldap_error", "error": f"{type(exc).__name__}: {exc}"[:200]}), flush=True)
-        return False
+        return None
     finally:
         conn.unbind()
 
@@ -133,7 +150,7 @@ nav a{margin-right:1rem}.card{border:1px solid #8884;border-radius:8px;padding:1
 input,select,button{padding:.4rem .6rem;margin:.2rem 0;font:inherit}.err{color:#c0392b}.ok{color:#1e8e3e}
 code{background:#8882;padding:.1rem .3rem;border-radius:4px}table{border-collapse:collapse}td,th{padding:.3rem .8rem;border-bottom:1px solid #8884;text-align:left}</style>
 <h1>Lab admin panel</h1>
-{% if session.user %}<nav><a href="{{ url_for('home') }}">Status</a><a href="{{ url_for('simulate') }}">Policy simulation</a>
+{% if session.user %}<nav><a href="{{ url_for('home') }}">Status</a><a href="{{ url_for('simulate') }}">Policy simulation</a><a href="{{ url_for('failover') }}">Failover tests</a>
 <span style="float:right">{{ session.user }} · <a href="{{ url_for('logout') }}">log out</a></span></nav>{% endif %}
 {{ body|safe }}"""
 
@@ -163,12 +180,14 @@ def login():
         if limiter.blocked(key) or limiter.blocked(f"{ip}|*"):
             audit("login_blocked", target=user)
             return page("<p class=err>Too many failed attempts. Try again in a few minutes.</p>"), 429
-        if user and ad_authenticate(user, request.form.get("password", "")):
+        role = ad_authenticate(user, request.form.get("password", "")) if user else None
+        if role:
             limiter.reset(key)
             session.clear()
             session.permanent = True
             session["user"] = user
-            audit("login_ok")
+            session["role"] = role
+            audit("login_ok", role=role)
             return redirect(url_for("home"))
         limiter.fail(key)
         limiter.fail(f"{ip}|*")
@@ -231,7 +250,15 @@ def simulate():
                 name = core.valid_edl(request.form.get("edl", ""))
                 ctx["edl"] = {"name": name, **core.parse_edl_sample(fw_op(ip, core.edl_show_cmd(name), vsys="vsys1"))}
                 if ctx["edl"]["sample"]:
-                    ctx["form"]["dst"] = ctx["edl"]["sample"][0]
+                    # Outbound lists are matched on the destination, inbound ones (scanners, Tor exits,
+                    # vulnerable services) on the source of a session arriving from the internet.
+                    use = request.form.get("use", "dst")
+                    if use == "src":
+                        ctx["form"].update({"src": ctx["edl"]["sample"][0], "dst": CFG["spoke_host"],
+                                            "zfrom": "untrust", "zto": "trust"})
+                    else:
+                        ctx["form"].update({"dst": ctx["edl"]["sample"][0], "src": CFG["spoke_host"],
+                                            "zfrom": "trust", "zto": "untrust"})
                 audit("edl_sample", list=name)
             else:
                 f = ctx["form"]
@@ -258,11 +285,179 @@ def simulate():
 <div class=card><h2>Take a destination from an IP Defense list</h2>
 <form method=post><input type=hidden name=csrf value="{{ csrf }}">
 <select name=edl>{% for l in lists %}<option>{{ l }}</option>{% endfor %}</select>
+<select name=use><option value=dst>use as destination (outbound, trust to untrust)</option><option value=src>use as source (inbound, untrust to trust)</option></select>
 <input type=hidden name=src value="{{ form.src }}"><input type=hidden name=port value="{{ form.port }}">
 <input type=hidden name=proto value="{{ form.proto }}"><input type=hidden name=zfrom value="{{ form.zfrom }}"><input type=hidden name=zto value="{{ form.zto }}">
 <button name=action value=sample>Load sample</button></form>
 {% if edl %}<p><code>{{ edl.name }}</code>: {{ edl.total }} entries. Sample: {{ edl.sample|join(', ') }}.<br>
-The first one is now in the form above.</p>{% endif %}</div>""", **ctx)
+The first one is now in the form above (zones set to match); press Simulate.</p>{% endif %}</div>""", **ctx)
+
+
+# ---- failover tests (operators only) ----------------------------------------------------
+# One test at a time per host. The scenarios refuse to start unless the pair is a clean,
+# synchronized active/passive pair, so a second host cannot start a conflicting run either.
+RUN = {"job": None, "probe": None}
+RUN_LOCK = threading.Lock()
+JS = r"""(function () {
+  var box = document.getElementById('progress');
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; e.textContent = text; return e; }
+  function render(d) {
+    box.textContent = '';
+    if (!d.job) { box.appendChild(el('p', '', 'No test has been run on this host yet.')); return; }
+    var j = d.job, p = d.probe;
+    box.appendChild(el('h3', j.status === 'failed' ? 'err' : (j.status === 'done' ? 'ok' : ''),
+      j.scenario + ' — ' + j.status + ' (' + j.elapsed + 's, started by ' + j.user + ')'));
+    if (p) {
+      box.appendChild(el('p', p.down_now ? 'err' : '',
+        'GlobalProtect portal: ' + p.checks + ' checks, ' + p.failed + ' failed, longest outage ' +
+        p.longest_outage_s + 's, total ' + p.total_outage_s + 's, now ' + (p.down_now ? 'DOWN' : 'UP')));
+    }
+    if (j.result && j.result.takeover_s !== undefined) {
+      box.appendChild(el('p', '', 'Takeover time (peer became active): ' + j.result.takeover_s + 's'));
+    }
+    var ul = document.createElement('ul');
+    j.steps.forEach(function (s) { ul.appendChild(el('li', s.level === 'error' ? 'err' : (s.level === 'warn' ? 'err' : ''), '+' + s.t + 's  ' + s.msg)); });
+    box.appendChild(ul);
+  }
+  function poll() {
+    var delay = 2000;
+    fetch('/failover/status', {credentials: 'same-origin'}).then(function (r) { return r.json(); })
+      .then(function (d) { render(d); if (!d.job || d.job.status !== 'running') delay = 8000; })
+      .catch(function () {}).then(function () { setTimeout(poll, delay); });
+  }
+  poll();
+})();
+"""
+
+
+class HttpApi:
+    """Firewall HA operations over the XML API, addressed by unit name (fw1/fw2)."""
+
+    def _ip(self, unit):
+        return CFG["fw_map"][unit]["ip"]
+
+    def ha(self, unit):
+        return core.parse_ha(fw_op(self._ip(unit), core.HA_CMD))
+
+    def suspend(self, unit):
+        fw_op(self._ip(unit), core.HA_SUSPEND_CMD)
+
+    def functional(self, unit):
+        fw_op(self._ip(unit), core.HA_FUNCTIONAL_CMD)
+
+
+class Ec2Api:
+    """Start/stop of the two firewall instances only (the IAM role allows nothing else)."""
+
+    def __init__(self):
+        import boto3
+        self.client = boto3.client("ec2", region_name=CFG["region"] or None)
+
+    def _id(self, unit):
+        return CFG["fw_map"][unit]["id"]
+
+    def state(self, unit):
+        r = self.client.describe_instances(InstanceIds=[self._id(unit)])
+        return r["Reservations"][0]["Instances"][0]["State"]["Name"]
+
+    def stop(self, unit):
+        self.client.stop_instances(InstanceIds=[self._id(unit)])
+
+    def start(self, unit):
+        self.client.start_instances(InstanceIds=[self._id(unit)])
+
+
+def gp_check():
+    try:
+        r = requests.get(f"https://{CFG['gp_fqdn']}/global-protect/prelogin.esp", timeout=3)
+        return r.status_code == 200 and "Success" in r.text
+    except requests.RequestException:
+        return False
+
+
+def start_job(scenario, user, ip):
+    job = fo.Job(scenario, user)
+    probe = fo.ProbeStats()
+    stop = threading.Event()
+    ctx = fo.Ctx(HttpApi(), Ec2Api(), job, sorted(CFG["fw_map"]))
+
+    def prober():
+        while not stop.is_set():
+            probe.record(gp_check())
+            stop.wait(1)
+
+    def runner():
+        try:
+            fo.run_job(ctx, fo.SCENARIOS[scenario][1])
+        finally:
+            stop.set()
+            job.result["probe"] = probe.summary()
+            print(json.dumps({"event": "failover_finished", "user": user, "ip": ip, "scenario": scenario,
+                              "status": job.status, "result": job.result}), flush=True)
+
+    RUN["job"], RUN["probe"] = job, probe
+    if CFG["gp_fqdn"]:
+        threading.Thread(target=prober, daemon=True).start()
+    threading.Thread(target=runner, daemon=True).start()
+
+
+@app.get("/failover.js")
+def failover_js():
+    return Response(JS, mimetype="application/javascript")
+
+
+@app.get("/failover/status")
+def failover_status():
+    if not session.get("user"):
+        abort(401)
+    job = RUN["job"]
+    return jsonify({"job": job.to_dict() if job else None,
+                    "probe": RUN["probe"].summary() if RUN["probe"] else None})
+
+
+@app.route("/failover", methods=["GET", "POST"])
+def failover():
+    gate = need_login()
+    if gate:
+        return gate
+    enabled = bool(CFG["fw_map"])
+    operator = session.get("role") == "operator"
+    message = None
+    if request.method == "POST":
+        check_csrf()
+        scenario = request.form.get("scenario", "")
+        if not (enabled and operator):
+            audit("failover_denied", scenario=scenario)
+            abort(403)
+        if scenario not in fo.SCENARIOS:
+            message = "Unknown test."
+        elif request.form.get("confirm", "") != "FAILOVER":
+            message = "Type FAILOVER in the confirmation box to start."
+        else:
+            with RUN_LOCK:
+                running = RUN["job"] is not None and RUN["job"].status == "running"
+                if running:
+                    message = "A test is already running on this host."
+                else:
+                    audit("failover_start", scenario=scenario)
+                    start_job(scenario, session["user"],
+                              request.headers.get("X-Forwarded-For", request.remote_addr))
+                    message = "Started. Progress appears below."
+    return page("""<div class=card><h2>Failover tests</h2>
+<p>Runs a real failover of the firewall pair and shows, live, how long the GlobalProtect portal was
+unreachable. The panel stays up (it runs outside the firewall path, in two AZs).</p>
+{% if not enabled %}<p class=err>Failover tests are not enabled in this deployment.</p>
+{% elif not operator %}<p class=err>Your account is not an operator, so these tests are disabled for you.</p>
+{% else %}<form method=post><input type=hidden name=csrf value="{{ csrf }}">
+<p>{% for key, item in scenarios.items() %}<label><input type=radio name=scenario value="{{ key }}" {{ 'checked' if loop.first }}> {{ item[0] }}</label><br>{% endfor %}</p>
+<p><label>Type <code>FAILOVER</code> to confirm <input name=confirm autocomplete=off size=12></label>
+<button>Start</button></p>
+<p><small>The test refuses to start unless one firewall is active, the other passive and config-synchronized.
+If a run is interrupted, use the recover option.</small></p></form>{% endif %}
+{% if message %}<p><b>{{ message }}</b></p>{% endif %}</div>
+<div class=card id=progress><p>Loading</p></div>
+<script src="{{ url_for('failover_js') }}"></script>""", enabled=enabled, operator=operator,
+                scenarios=fo.SCENARIOS, message=message)
 
 
 if __name__ == "__main__":

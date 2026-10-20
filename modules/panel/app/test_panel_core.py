@@ -43,6 +43,10 @@ class Commands(unittest.TestCase):
         ET.fromstring(x)
         self.assertIn("<source>10.12.0.10</source>", x)
 
+    def test_ha_commands_are_well_formed(self):
+        for cmd in (m.HA_CMD, m.HA_SUSPEND_CMD, m.HA_FUNCTIONAL_CMD, m.INFO_CMD):
+            ET.fromstring(cmd)
+
     def test_edl_cmd_is_well_formed(self):
         ET.fromstring(m.edl_show_cmd("panw-torexit-ip-list"))
 
