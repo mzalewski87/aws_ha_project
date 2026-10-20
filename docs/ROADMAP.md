@@ -110,9 +110,9 @@ plane with path A (see ADR D11, `docs/DEPLOYMENT-SCM.md`).
   XML API (SCM has no NGFW object for them) — **built and verified live**.
 - B-PKI, Guacamole, the admin/test panel (`modules/panel`), Advanced IP Defense (list
   variant) and an in-place PAN-OS upgrade through SCM — **verified live**.
-- Status: **live-verified in one region** (incl. teardown + redeploy from code). Next:
-  Region B + Global Accelerator for path B (SCM per-device region overrides, cross-region
-  DC replication rule and multi-gateway portal are in place), region-failure test in the panel.
+- Status: **live-verified in two regions** behind Global Accelerator (Region B pair in the same
+  SCM folder via per-device overrides, replica DC, gw-b, two-gateway portal), panel with a
+  region-outage test. Next: run the region-outage test live and record the numbers.
 
 ## Phase G — Guacamole RDP gateway (both paths)
 

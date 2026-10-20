@@ -16,7 +16,7 @@ One codebase, two management planes, selected with `management_mode`:
 | | Path A — Panorama (default) | Path B — Strata Cloud Manager |
 |---|---|---|
 | Manager | self-hosted Panorama EC2 | SCM tenant (no EC2) |
-| Status | live-verified, **multi-region** (Region B + Global Accelerator) | live-verified in **one region**; Region B in progress |
+| Status | live-verified, **multi-region** (Region B + Global Accelerator) | live-verified, **multi-region** (Region B in the same SCM folder + Global Accelerator) |
 | Firewall PAN-OS | pinned, <= Panorama | newest SCM-supported (12.2.x), Advanced Routing Engine |
 | Extra prerequisites | Panorama serial, licence, OTP | SCM tenant, service account, deployment profile **activated for the tenant**, registration PIN |
 | Runbook | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | [docs/DEPLOYMENT-SCM.md](docs/DEPLOYMENT-SCM.md) (fresh account → working, step by step) |

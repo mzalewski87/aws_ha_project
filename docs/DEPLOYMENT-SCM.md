@@ -1,7 +1,8 @@
 # Deployment Guide — Path B: Strata Cloud Manager
 
-> **STATUS (2026-10-20): LIVE-VERIFIED in one region (Region A) on a fresh AWS account,
-> including a full teardown and a second deployment from the repository code alone.**
+> **STATUS (2026-10-20): LIVE-VERIFIED on a fresh AWS account in TWO regions (eu-central-1 +
+> eu-west-1) behind Global Accelerator, including (for Region A) a full teardown and a second
+> deployment from the repository code alone.**
 >
 > Verified live:
 > - VM-Series on PAN-OS 12.2.3 with the Advanced Routing Engine onboard to SCM. The folder
@@ -19,8 +20,13 @@
 > - Advanced IP Defense in list mode (`alert` and `block`).
 > - The admin/test panel: AD login, policy simulation, failover tests with timings.
 >
+> - Region B: second pair onboarded into the SAME SCM folder with per-device region overrides,
+>   HA from SCM, GP gateway `gw-b`, portal listing both gateways on all four units, a replica DC
+>   (AD replication 0 failures both ways), Global Accelerator health-checking both regions'
+>   portals, and the panel showing and testing both regions.
+>
 > **Not covered:**
-> - Region B / Global Accelerator in path B (in progress; path A has them).
+> - A live region-outage run (the panel's *Region outage* test exists; run it to measure).
 > - GP session behaviour *during* a failover (only the state after it was checked).
 > - SSL decryption (its script uses Panorama).
 > - The root CA's CRL in AD (see [PKI](#pki-notes)).
@@ -239,6 +245,66 @@ apply and push:
 terraform -chdir=phase2-scm-config apply -parallelism=4
 bash scripts/scm-push.sh AWS-HA-Transit
 ```
+
+### B10 — Optional: Region B + Global Accelerator (multi-region)
+
+The second region uses the same `region_stack` (`eu-west-1`, CIDRs `10.2x.0.0/16`). Its
+firewalls join the **same SCM folder**. Only the region-specific values (floating IP and
+gateways) are overridden per device.
+
+1. Set the root `terraform.tfvars`:
+   ```hcl
+   enable_region_b = true
+   region_b        = "eu-west-1"
+   ```
+   Then apply in two passes. The cross-region resources iterate over Region B route tables,
+   which do not exist yet. `IncorrectState` / `InvalidTransitGatewayID.NotFound` on the first
+   pass is AWS eventual consistency: re-run.
+   ```bash
+   terraform apply -target=module.region_b
+   ```
+2. Set `enable_global_accelerator = true` and apply everything: TGW peering, cross-region routes,
+   GA, `gw-b`, and the panel's Region B pair.
+   ```bash
+   terraform apply
+   ```
+3. Run the SCM workspace with `gp_local_ips = ["10.10.10.100", "10.20.10.100"]` in
+   `phase2-scm-config/terraform.tfvars`:
+   ```bash
+   bash scripts/scm-onboard-fw.sh AWS-HA-Transit \
+     10.20.0.11=10.20.20.11/24,10.20.10.11/24,10.20.10.100/32,10.20.20.1,10.20.10.1 \
+     10.20.0.12=10.20.20.12/24,10.20.10.12/24,10.20.10.100/32,10.20.20.1,10.20.10.1
+   terraform -chdir=phase2-scm-config apply -parallelism=4
+   PRIMARY_SERIAL=... SECONDARY_SERIAL=... PRIMARY_MGMT_IP=10.20.0.11 SECONDARY_MGMT_IP=10.20.0.12 \
+     PRIMARY_HA2_IP=10.20.30.11 SECONDARY_HA2_IP=10.20.30.12 bash scripts/scm-ha.sh
+   bash scripts/scm-push.sh AWS-HA-Transit      # pushes to all four units; waits for every one
+   ```
+   - The onboarding keeps the Region A entries in `fw_devices.auto.tfvars.json` and adds Region
+     B's.
+   - The Region B firewalls' first boot took about 35 minutes before they connected.
+4. Set `region_b_create_dc = true` and run `terraform apply` **after** step 3, because the DC
+   needs the Region B firewalls for egress. It joins `panw.labs` as an additional DC; promotion
+   takes 25–40 min. Check on either DC: `repadmin /replsummary` shows 0 fails. DC↔DC traffic
+   uses TGW peering directly, not the firewalls.
+5. Build GlobalProtect on EACH Region B unit, then rebuild the portal on the Region A units so
+   that **every** portal lists both gateways:
+   - common settings: `GATEWAYS="gw-a.<zone>:1 gw-b.<zone>:1"`;
+   - Region B units: `GW_FQDN=gw-b.<zone> GW_NAME=gp-gateway-eu-west FLOATING=10.20.10.100/32
+     IP_POOL=10.20.200.0/24 DNS_SERVER_PRIMARY=10.23.0.10 DNS_SERVER_SECONDARY=10.13.0.10`
+     (`admin`, `build`, `letsencrypt`);
+   - Region A units: `build` again with `GATEWAYS` and `DNS_SERVER_SECONDARY=10.23.0.10` (the
+     Let's Encrypt certificate is kept);
+   - finally run `cleanup` on all four units.
+6. Create `panelro` on the Region B units: `FW_IPS="10.20.0.11 10.20.0.12" ... panel-setup.sh fw`.
+7. Verify:
+   - `aws globalaccelerator list-endpoint-groups` (API region `us-west-2`) shows both regions
+     `HEALTHY`;
+   - `https://gw-b.<zone>/global-protect/prelogin.esp` answers with a trusted certificate;
+   - the panel topology shows both pairs.
+
+On an active unit, every Frontier Virtual Patching content download (every few minutes on
+12.2.4) is followed by an HA-Sync job of about 2 minutes. Config writes during it fail with
+"A commit is pending". `scm-gp-local.sh` waits it out.
 
 ### Verification checklist
 
