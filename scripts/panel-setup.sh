@@ -25,7 +25,7 @@ set -euo pipefail
 MODE="${1:?usage: $0 <ad|fw>}"
 REGION="${AWS_REGION:?AWS_REGION required}"
 say() { echo "[panel] $*"; }
-die() { echo "[panel] ERROR: $*" >&2; exit 1; }
+die() { echo "[panel] ERROR: $*" >&2; pkill -f 'session-manager-plugin.*22443' 2>/dev/null || true; exit 1; }
 
 ad_step() {
   : "${DC_INSTANCE_ID:?}" "${DOMAIN_ADMIN_USER:?}" "${DOMAIN_ADMIN_PASSWORD:?}" "${PANEL_USERS:?}"
@@ -77,9 +77,10 @@ fw_step() {
     for _ in $(seq 1 20); do nc -z -G 2 127.0.0.1 "$lp" >/dev/null 2>&1 && break; sleep 1; done
     # shellcheck disable=SC2064
     trap "kill $pid 2>/dev/null || true; pkill -f 'session-manager-plugin.*$lp' 2>/dev/null || true" RETURN
-    key="$(fw_api "$lp" --data-urlencode type=keygen --data-urlencode "user=$FW_ADMIN_USER" \
-          --data-urlencode "password=$FW_ADMIN_PASSWORD" | sed -E 's/.*<key>([^<]+)<\/key>.*/\1/')" || true
-    [ -n "$key" ] && [[ "$key" != *"<"* ]] || die "could not get an API key from $ip (wrong admin credentials?)"
+    res="$(fw_api "$lp" --data-urlencode type=keygen --data-urlencode "user=$FW_ADMIN_USER" \
+          --data-urlencode "password=$FW_ADMIN_PASSWORD" || true)"
+    key="$(sed -nE 's/.*<key>([^<]+)<\/key>.*/\1/p' <<<"$res")"
+    [ -n "$key" ] || die "no API key from $ip as $FW_ADMIN_USER. Answer: $(tr -d '\n' <<<"$res" | cut -c1-300)"
     hash="$(fw_api "$lp" --data-urlencode type=op --data-urlencode "key=$key" \
           --data-urlencode "cmd=<request><password-hash><password>${pw}</password></password-hash></request>" \
           | sed -E 's/.*<phash>([^<]+)<\/phash>.*/\1/')"

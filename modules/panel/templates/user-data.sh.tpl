@@ -9,7 +9,7 @@ mkdir -p /opt/panel
 echo "${app_b64}" | base64 -d | gunzip > /opt/panel/app.py
 echo "${core_b64}" | base64 -d | gunzip > /opt/panel/panel_core.py
 python3 -m venv /opt/panel/venv
-/opt/panel/venv/bin/pip install --quiet flask gunicorn requests ldap3
+/opt/panel/venv/bin/pip install --quiet flask gunicorn requests ldap3 pycryptodome  # pycryptodome: MD4 for NTLM (OpenSSL 3 dropped it)
 
 SECRET=$(aws secretsmanager get-secret-value --region "${region}" --secret-id "${secret_id}" --query SecretString --output text)
 umask 077

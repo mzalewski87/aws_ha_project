@@ -94,6 +94,9 @@ def ad_authenticate(username, password):
         return any(g.startswith(f'cn={CFG["group"].lower()},') for g in groups)
     except LDAPException:
         return False
+    except Exception as exc:  # fail closed: any other bind problem is a failed sign-in, not a 500
+        print(json.dumps({"event": "ldap_error", "error": f"{type(exc).__name__}: {exc}"[:200]}), flush=True)
+        return False
     finally:
         conn.unbind()
 
