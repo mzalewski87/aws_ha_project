@@ -91,7 +91,7 @@ fw_step() {
     # is not enough: it cannot run those op commands through the XML API.
     res="$(fw_api "$lp" --data-urlencode type=config --data-urlencode action=set --data-urlencode "key=$key" \
           --data-urlencode "xpath=/config/shared/admin-role/entry[@name='panel-ro']" \
-          --data-urlencode "element=<role><device><cli>superreader</cli><webui><dashboard>disable</dashboard></webui><xmlapi><report>disable</report><log>disable</log><config>disable</config><op>enable</op><commit>disable</commit><export>disable</export><import>disable</import></xmlapi><restapi><device><objects>disable</objects></device></restapi></device></role>")"
+          --data-urlencode "element=<role><device><cli>superreader</cli><webui><dashboard>disable</dashboard></webui><xmlapi><report>disable</report><log>disable</log><config>disable</config><op>enable</op><commit>disable</commit><export>disable</export><import>disable</import></xmlapi></device></role>")"
     grep -q 'status="success"' <<<"$res" || die "creating the panel-ro role on $ip failed: $res"
     # Re-create the user from scratch so a previous superreader assignment cannot linger.
     fw_api "$lp" --data-urlencode type=config --data-urlencode action=delete --data-urlencode "key=$key" \
