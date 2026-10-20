@@ -69,6 +69,11 @@ secondary IP added once to the trust ENI the routes point at
 (`aws ec2 assign-private-ip-addresses ... --allow-reassignment`), because
 `private_ips` is in `ignore_changes`. Verify after a failover with the panel's
 topology, or `describe-route-tables` on the security VPC TGW-attachment tables.
+**Verified live (CloudTrail, 2026-10-20):** with the trust secondary IP in place, a soft
+failover made the new active unit call `AssignPrivateIpAddresses` for both floating IPs
+and `ReplaceRoute` for both TGW-attachment route tables (~6 s after the suspend), and the
+failback moved them back; before it, a failback moved only the untrust IP and made no
+`ReplaceRoute` call at all.
 
 ## Firmware
 
