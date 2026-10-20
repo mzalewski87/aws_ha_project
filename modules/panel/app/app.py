@@ -494,6 +494,15 @@ def start_job(scenario, user, ip, restore):
         try:
             fo.run_job(ctx, fo.SCENARIOS[scenario][1])
         finally:
+            # The HA roles can settle before the portal answers again (seen live: a failback
+            # finished while the portal was still down). Keep probing until it is back, at most
+            # 120 s, so the measured outage is the real one.
+            if CFG["gp_fqdn"]:
+                deadline = time.time() + 120
+                while probe.summary()["down_now"] and time.time() < deadline:
+                    time.sleep(1)
+                if not probe.summary()["down_now"] and probe.outages:
+                    job.mark("portal reachable again")
             stop.set()
             job.result["probe"] = {k: v for k, v in probe.summary().items() if k != "outages"}
             STORE.put(job_doc(job, probe), force=True)
