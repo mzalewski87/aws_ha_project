@@ -147,8 +147,12 @@ data "aws_caller_identity" "current" {}
 
 # Failover tests: the ONLY EC2 rights of the panel. Describe is not resource-scoped by AWS;
 # stop/start are limited to the firewall instances themselves.
+locals {
+  all_units = merge([for k, p in var.pairs : { for n, u in p.units : n => merge(u, { region = p.region }) }]...)
+}
+
 resource "aws_iam_role_policy" "topology" {
-  count = length(var.fw_map) > 0 ? 1 : 0
+  count = length(var.pairs) > 0 ? 1 : 0
   name  = "read-topology-and-runs"
   role  = aws_iam_role.host.id
   policy = jsonencode({
@@ -180,8 +184,8 @@ resource "aws_iam_role_policy" "failover" {
         Effect = "Allow"
         Action = ["ec2:StopInstances", "ec2:StartInstances"]
         Resource = [
-          for u in values(var.fw_map) :
-          "arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:instance/${u.id}"
+          for u in values(local.all_units) :
+          "arn:aws:ec2:${u.region}:${data.aws_caller_identity.current.account_id}:instance/${u.id}"
         ]
       }
     ]
@@ -265,11 +269,7 @@ resource "aws_instance" "panel" {
     fw_ips      = join(",", var.fw_mgmt_ips)
     spoke_host  = var.spoke_host
     # Failover tests (empty map = disabled; the app then hides the controls).
-    topo_b64 = base64encode(jsonencode({
-      units             = var.fw_map
-      eip_allocation_id = var.eip_allocation_id
-      public_ip         = var.public_ip
-    }))
+    topo_b64         = base64encode(jsonencode({ pairs = var.pairs }))
     failover_enabled = var.enable_failover ? "1" : "0"
     runs_table       = aws_dynamodb_table.runs.name
     operator_group   = var.operator_group

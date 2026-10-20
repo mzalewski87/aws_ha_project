@@ -95,16 +95,32 @@ module "region_a" {
   ssh_private_key_file    = var.ssh_private_key_file
   ssh_public_key          = var.ssh_public_key
 
-  create_app               = true
-  create_pki               = var.enable_pki
-  app_aliases              = local.web_domain_on ? [local.web_fqdn] : []
-  app_acm_certificate_arn  = local.web_domain_on ? aws_acm_certificate_validation.web[0].certificate_arn : ""
-  create_dc                = true
-  dc_domain_name           = var.dc_domain_name
-  create_guacamole         = local.guac_on
-  create_panel             = local.panel_on
-  panel_enable_failover    = var.panel_enable_failover
-  panel_alb_ingress_cidrs  = var.panel_alb_ingress_cidrs
+  create_app              = true
+  create_pki              = var.enable_pki
+  app_aliases             = local.web_domain_on ? [local.web_fqdn] : []
+  app_acm_certificate_arn = local.web_domain_on ? aws_acm_certificate_validation.web[0].certificate_arn : ""
+  create_dc               = true
+  dc_domain_name          = var.dc_domain_name
+  create_guacamole        = local.guac_on
+  create_panel            = local.panel_on
+  panel_enable_failover   = var.panel_enable_failover
+  panel_alb_ingress_cidrs = var.panel_alb_ingress_cidrs
+  # Region B's pair in the panel (topology + failover/region tests). Plain values only, so
+  # no module-level dependency on region_b is created.
+  panel_remote_pairs = var.enable_region_b ? {
+    b = {
+      label             = "Region B"
+      region            = var.region_b
+      eip_allocation_id = module.region_b[0].fw_public_eip_allocation_id
+      public_ip         = module.region_b[0].fw_public_eip
+      units = { for k, ip in module.region_b[0].fw_mgmt_private_ips : "b-${k}" => {
+        ip          = ip
+        id          = module.region_b[0].fw_instance_ids[k]
+        untrust_eni = module.region_b[0].fw_untrust_eni_ids[k]
+        trust_eni   = module.region_b[0].fw_trust_eni_ids[k]
+      } }
+    }
+  } : {}
   panel_gp_fqdn            = var.enable_custom_domain ? "${var.custom_domain_portal_hostname}.${var.custom_domain_subdomain_zone}" : ""
   panel_certificate_arn    = local.panel_on ? aws_acm_certificate_validation.panel[0].certificate_arn : ""
   guac_certificate_arn     = local.guac_on ? aws_acm_certificate_validation.guac[0].certificate_arn : ""

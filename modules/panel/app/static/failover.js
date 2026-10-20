@@ -42,51 +42,79 @@
   function drawTopology(t) {
     var svg = $('topo');
     clear(svg);
-    svg.setAttribute('viewBox', '0 0 960 360');
-    var names = Object.keys(t.units).sort();
-    var pos = {};
-    names.forEach(function (n, i) { pos[n] = {x: 410, y: i === 0 ? 20 : 220}; });
-    var routeCount = {};
-    (t.routes || []).forEach(function (r) { routeCount[r.unit] = (routeCount[r.unit] || 0) + 1; });
-    var routeUnit = names.filter(function (n) { return routeCount[n]; })[0];
+    var keys = Object.keys(t.pairs || {}).sort();
+    var multi = keys.length > 1;
+    var ROW = 330, TOP = 24;
+    var H = TOP + keys.length * ROW;
+    svg.setAttribute('viewBox', '0 0 960 ' + H);
+    var midY = H / 2;
 
-    // edges first, so boxes sit on top
-    svg.appendChild(s('path', {d: 'M170,180 L220,180', 'class': 'edge ' + (t.gp_up === false ? 'bad' : 'live')}));
-    names.forEach(function (n) {
-      var p = pos[n];
-      svg.appendChild(s('path', {d: 'M370,180 C390,180 390,' + (p.y + 60) + ' 410,' + (p.y + 60),
-        'class': 'edge ' + (t.eip_holder === n ? 'live' : '')}));
-      svg.appendChild(s('path', {d: 'M630,' + (p.y + 60) + ' C650,' + (p.y + 60) + ' 650,180 710,180',
-        'class': 'edge ' + (routeUnit === n ? 'live' : '')}));
+    // per-region rows first (edges under boxes), the client side last
+    var regionUp = {};
+    keys.forEach(function (key, r) {
+      var p = t.pairs[key], oy = TOP + r * ROW;
+      var names = Object.keys(p.units).sort();
+      var pos = {};
+      names.forEach(function (n, i) { pos[n] = {x: 455, y: oy + (i === 0 ? 0 : 180)}; });
+      var routeCount = {};
+      (p.routes || []).forEach(function (rt) { routeCount[rt.unit] = (routeCount[rt.unit] || 0) + 1; });
+      var routeUnit = names.filter(function (n) { return routeCount[n]; })[0];
+      var active = names.filter(function (n) { return stateClass(p.units[n]) === 'live'; })[0];
+      regionUp[key] = !!(active && p.eip_holder === active);
+      var eipY = oy + 120;
+
+      names.forEach(function (n) {
+        var q = pos[n];
+        svg.appendChild(s('path', {d: 'M430,' + (eipY + 35) + ' C445,' + (eipY + 35) + ' 440,' + (q.y + 60) + ' 455,' + (q.y + 60),
+          'class': 'edge ' + (p.eip_holder === n ? 'live' : '')}));
+        svg.appendChild(s('path', {d: 'M670,' + (q.y + 60) + ' C690,' + (q.y + 60) + ' 690,' + (eipY + 40) + ' 720,' + (eipY + 40),
+          'class': 'edge ' + (routeUnit === n ? 'live' : '')}));
+      });
+      if (names.length === 2) {
+        var a = p.units[names[0]], b = p.units[names[1]];
+        var synced = a.config_sync === 'synchronized' && b.config_sync === 'synchronized';
+        svg.appendChild(s('path', {d: 'M562,' + (oy + 120) + ' L562,' + (oy + 180), 'class': 'edge ' + (synced ? 'ok' : 'bad')}));
+        svg.appendChild(s('text', {x: 572, y: oy + 147, 'class': 'small'}, 'HA1 / HA2'));
+        svg.appendChild(s('text', {x: 572, y: oy + 163, 'class': 'small'}, synced ? 'config synchronized' : 'config NOT synchronized'));
+      }
+      svg.appendChild(s('text', {x: 300, y: oy + 14, 'class': 'big'}, p.label));
+      svg.appendChild(s('text', {x: 300, y: oy + 32, 'class': 'small'}, p.region));
+      box(svg, 300, eipY, 130, 70, p.eip_holder ? 'live' : 'bad',
+        [['Public EIP', ''], [p.public_ip || '', 'small'], [p.eip_holder ? ('\u2192 ' + p.eip_holder) : 'not attached', 'small']]);
+      names.forEach(function (n) {
+        var u = p.units[n], q = pos[n];
+        var pref = names.slice().sort(function (x, y) {
+          return (parseInt(p.units[x].priority, 10) || 1e6) - (parseInt(p.units[y].priority, 10) || 1e6);
+        })[0] === n;
+        box(svg, q.x, q.y, 215, 120, stateClass(u), [
+          [n + '  \u00b7  ' + u.ip, ''],
+          [(u.state || 'unknown').toUpperCase(), 'big'],
+          ['EC2 ' + (u.ec2 || '?') + '  \u00b7  sync ' + (u.config_sync || '?'), 'small'],
+          ['priority ' + (u.priority || '?') + (pref ? '  \u00b7  preferred' : ''), 'small'],
+          [(p.eip_holder === n ? 'holds the EIP' : '') + (routeCount[n] ? ((p.eip_holder === n ? ' \u00b7 ' : '') + routeCount[n] + ' route(s)') : ''), 'small']
+        ]);
+      });
+      box(svg, 720, eipY, 230, 80, routeUnit ? 'live' : '',
+        [['Transit Gateway', ''], ['spokes: DC, apps, GP pool', 'small'],
+         [routeUnit ? ('inspection via ' + routeUnit) : 'no route to a firewall', 'small']]);
     });
-    if (names.length === 2) {
-      var a = t.units[names[0]], b = t.units[names[1]];
-      var synced = a.config_sync === 'synchronized' && b.config_sync === 'synchronized';
-      svg.appendChild(s('path', {d: 'M520,140 L520,220', 'class': 'edge ' + (synced ? 'ok' : 'bad')}));
-      svg.appendChild(s('text', {x: 530, y: 177, 'class': 'small'}, 'HA1 / HA2'));
-      svg.appendChild(s('text', {x: 530, y: 193, 'class': 'small'}, synced ? 'config synchronized' : 'config NOT synchronized'));
+
+    // client side: clients -> (Global Accelerator) -> each region's EIP
+    var gpCls = t.gp_up === false ? 'bad' : (t.gp_up ? 'live' : '');
+    if (multi) {
+      keys.forEach(function (key, r) {
+        var eipY = TOP + r * ROW + 120;
+        svg.appendChild(s('path', {d: 'M285,' + midY + ' C292,' + midY + ' 292,' + (eipY + 35) + ' 300,' + (eipY + 35),
+          'class': 'edge ' + (regionUp[key] ? 'live' : 'bad')}));
+      });
+      svg.appendChild(s('path', {d: 'M150,' + midY + ' L165,' + midY, 'class': 'edge ' + (t.gp_up === false ? 'bad' : 'live')}));
+      box(svg, 165, midY - 45, 120, 90, gpCls, [['Global', ''], ['Accelerator', ''], ['anycast', 'small']]);
+    } else if (keys.length) {
+      var y1 = TOP + 120 + 35;
+      svg.appendChild(s('path', {d: 'M150,' + midY + ' C220,' + midY + ' 220,' + y1 + ' 300,' + y1, 'class': 'edge ' + (t.gp_up === false ? 'bad' : 'live')}));
     }
-
-    box(svg, 10, 140, 160, 80, t.gp_up === false ? 'bad' : (t.gp_up ? 'live' : ''),
-      [['GP clients', ''], ['Internet', 'small'], [t.gp_up === null ? 'portal: n/a' : ('portal ' + (t.gp_up ? 'UP' : 'DOWN')), 'big']]);
-    box(svg, 220, 145, 150, 70, t.eip_holder ? 'live' : 'bad',
-      [['Public EIP', ''], [t.public_ip || META.public_ip || '', 'small'], [t.eip_holder ? ('→ ' + t.eip_holder) : 'not attached', 'small']]);
-    names.forEach(function (n) {
-      var u = t.units[n], p = pos[n];
-      var pref = names.slice().sort(function (x, y) {
-        return (parseInt(t.units[x].priority, 10) || 1e6) - (parseInt(t.units[y].priority, 10) || 1e6);
-      })[0] === n;
-      box(svg, p.x, p.y, 220, 120, stateClass(u), [
-        [n + '  ·  ' + u.ip, ''],
-        [(u.state || 'unknown').toUpperCase(), 'big'],
-        ['EC2 ' + (u.ec2 || '?') + '  ·  sync ' + (u.config_sync || '?'), 'small'],
-        ['priority ' + (u.priority || '?') + (pref ? '  ·  preferred primary' : ''), 'small'],
-        [(t.eip_holder === n ? 'holds the EIP' : '') + (routeCount[n] ? ((t.eip_holder === n ? ' · ' : '') + routeCount[n] + ' route(s)') : ''), 'small']
-      ]);
-    });
-    box(svg, 710, 140, 240, 80, routeUnit ? 'live' : '',
-      [['Transit Gateway', ''], ['spokes: DC, apps, GP pool', 'small'],
-       [routeUnit ? ('inspection via ' + routeUnit) : 'no route to a firewall', 'small']]);
+    box(svg, 10, midY - 45, 140, 90, gpCls,
+      [['GP clients', ''], [t.gp_fqdn || 'portal', 'small'], [t.gp_up === null ? 'portal: n/a' : ('portal ' + (t.gp_up ? 'UP' : 'DOWN')), 'big']]);
 
     var note = 'Updated ' + clock(t.ts) + '.';
     if (t.errors && t.errors.length) note += ' ' + t.errors.join(' ');
@@ -124,7 +152,7 @@
     if (!j) { box.appendChild(h('p', {'class': 'muted'}, 'No test has been run yet.')); return; }
     var sc = META.scenarios[j.scenario] || {label: j.scenario, typical: 60};
     var head = h('p');
-    head.appendChild(h('b', {}, sc.label + ' '));
+    head.appendChild(h('b', {}, sc.label + ((j.options && j.options.pair_label) ? (' \u2014 ' + j.options.pair_label) : '') + ' '));
     head.appendChild(h('span', {'class': 'badge ' + j.status}, j.status));
     head.appendChild(h('span', {'class': 'muted'}, '  started ' + clock(j.started) + ' by ' + j.user +
       ', ' + j.elapsed + 's' + (j.status === 'running' ? (' (typically ' + Math.round(sc.typical / 60) + ' min)') : '')));
@@ -178,11 +206,12 @@
     if (!d.runs || !d.runs.length) { box.appendChild(h('p', {'class': 'muted'}, 'No runs stored yet.')); return; }
     var t = h('table', {'class': 'hist'});
     var tr = h('tr');
-    ['Started', 'Test', 'By', 'Result', 'Duration', 'Takeover', 'Failback', 'Portal down (total / longest)'].forEach(function (c) { tr.appendChild(h('th', {}, c)); });
+    ['Started', 'Region', 'Test', 'By', 'Result', 'Duration', 'Takeover', 'Failback', 'Portal down (total / longest)'].forEach(function (c) { tr.appendChild(h('th', {}, c)); });
     t.appendChild(tr);
     d.runs.forEach(function (r) {
       var row = h('tr');
       row.appendChild(h('td', {}, new Date(r.started * 1000).toLocaleString()));
+      row.appendChild(h('td', {}, r.pair || ''));
       row.appendChild(h('td', {}, r.scenario + (r.restore === false ? ' (no failback)' : '')));
       row.appendChild(h('td', {}, r.user));
       var st = h('td');

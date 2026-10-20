@@ -102,7 +102,7 @@ variable "guac_rdp_source_cidrs" {
 }
 
 variable "dc_replica_ips" {
-  description = "All domain controllers that replicate with each other across regions (e.g. [\"10.13.0.10\", \"10.23.0.10\"]). With two or more, a rule allows any traffic between them (AD replication uses RPC on dynamic ports); without it the cross-region replica hits deny-all. Empty = no rule."
+  description = "Domain controllers that replicate across regions (e.g. [\"10.13.0.10\", \"10.23.0.10\"]). With two or more, a rule allows any traffic between them (AD replication uses RPC on dynamic ports). Only needed if that traffic is routed THROUGH the firewalls: the default cross-region design (cross_region.tf) carries DC<->DC over TGW peering directly. Empty = no rule."
   type        = list(string)
   default     = []
 }

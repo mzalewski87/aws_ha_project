@@ -51,6 +51,16 @@ CFG = {
     "spoke_host": os.environ.get("PANEL_SPOKE_HOST", "10.12.0.10"),
 }
 
+# Pairs: {"a": {"label", "region", "eip_allocation_id", "public_ip", "units": {name: {ip, id,
+# untrust_eni, trust_eni}}}, "b": {...}}. Unit names are unique across pairs (e.g. a-fw1).
+if "pairs" not in CFG["topo"] and CFG["topo"].get("units"):
+    CFG["topo"] = {"pairs": {"a": {"label": "Region A", "region": CFG["region"],
+                                   **{k: v for k, v in CFG["topo"].items() if k != "pairs"}}}}
+for _p in CFG["topo"].get("pairs", {}).values():
+    _p.setdefault("region", CFG["region"])
+    for _u in _p.get("units", {}).values():
+        _u["region"] = _p["region"]
+
 for _k, _cn in (("group_dn", "group"), ("operator_group_dn", "operator_group")):
     CFG[_k] = os.environ.get("PANEL_" + _k.upper(), f"CN={CFG[_cn]},CN=Users,{CFG['base_dn']}").lower()
 
@@ -291,7 +301,7 @@ def rulebase(ip):
 
 def active_ip():
     """Mgmt IP of the active unit (it is the one that really decides); first unit as a fallback."""
-    for u in CFG["topo"].get("units", {}).values():
+    for u in units().values():
         try:
             if (core.parse_ha(fw_op(u["ip"], core.HA_CMD, timeout=5)).get("state") or "").startswith("active"):
                 return u["ip"]
@@ -404,20 +414,26 @@ _boto = {}
 _boto_lock = threading.Lock()  # creating boto3 clients from several threads at once is not safe
 
 
-def aws_client(service):
+def aws_client(service, region=None):
+    region = region or CFG["region"] or None
     with _boto_lock:
-        if service not in _boto:
+        if (service, region) not in _boto:
             import boto3
-            _boto[service] = boto3.client(service, region_name=CFG["region"] or None)
-        return _boto[service]
+            _boto[(service, region)] = boto3.client(service, region_name=region)
+        return _boto[(service, region)]
 
 
-def ec2_client():
-    return aws_client("ec2")
+def ec2_client(region=None):
+    return aws_client("ec2", region)
+
+
+def pairs():
+    return CFG["topo"].get("pairs", {})
 
 
 def units():
-    return CFG["topo"].get("units", {})
+    """All firewall units of all pairs, by name."""
+    return {n: {**u, "pair": k} for k, p in pairs().items() for n, u in p.get("units", {}).items()}
 
 
 class HttpApi:
@@ -440,14 +456,17 @@ class Ec2Api:
     """Start/stop of the two firewall instances only (the IAM role allows nothing else)."""
 
     def state(self, unit):
-        r = ec2_client().describe_instances(InstanceIds=[units()[unit]["id"]])
+        u = units()[unit]
+        r = ec2_client(u["region"]).describe_instances(InstanceIds=[u["id"]])
         return r["Reservations"][0]["Instances"][0]["State"]["Name"]
 
     def stop(self, unit):
-        ec2_client().stop_instances(InstanceIds=[units()[unit]["id"]])
+        u = units()[unit]
+        ec2_client(u["region"]).stop_instances(InstanceIds=[u["id"]])
 
     def start(self, unit):
-        ec2_client().start_instances(InstanceIds=[units()[unit]["id"]])
+        u = units()[unit]
+        ec2_client(u["region"]).start_instances(InstanceIds=[u["id"]])
 
 
 class StoreError(Exception):
@@ -583,13 +602,17 @@ def job_doc(job, probe):
     return doc
 
 
-def start_job(scenario, user, ip, restore, run_id=None):
+def start_job(scenario, user, ip, restore, run_id=None, pair=None):
     """Start a run in background threads. The caller must already hold the store lease for run_id."""
-    job = fo.Job(scenario, user, phases=fo.phases_for(scenario, restore), options={"restore": restore},
+    pair = pair or next(iter(pairs()), "a")
+    job = fo.Job(scenario, user, phases=fo.phases_for(scenario, restore),
+                 options={"restore": restore, "pair": pair, "pair_label": pairs().get(pair, {}).get("label", pair)},
                  run_id=run_id)
     probe = fo.ProbeStats(base=job.started)
     stop = threading.Event()
-    ctx = fo.Ctx(HttpApi(), Ec2Api(), job, sorted(units()))
+    mine = sorted(pairs()[pair]["units"])
+    others = sorted(n for k, p in pairs().items() if k != pair for n in p.get("units", {}))
+    ctx = fo.Ctx(HttpApi(), Ec2Api(), job, mine, others=others)
     job.listeners.append(lambda j: STORE.put(job_doc(j, probe)))
 
     def prober():
@@ -662,41 +685,45 @@ class Topology:
             self._build_lock.release()
 
     def _build(self):
-        topo, errors = CFG["topo"], []
-        out = {"units": {}, "public_ip": topo.get("public_ip", ""), "eip_holder": None, "eip_private_ip": None,
-               "routes": [], "gp_fqdn": CFG["gp_fqdn"], "gp_up": None, "ts": time.time()}
-        for name, u in sorted(units().items()):
-            d = {"name": name, "ip": u["ip"]}
+        errors, out = [], {"pairs": {}, "gp_fqdn": CFG["gp_fqdn"], "gp_up": None, "ts": time.time()}
+        for key, p in pairs().items():
+            pic = {"label": p.get("label", key), "region": p["region"], "public_ip": p.get("public_ip", ""),
+                   "eip_holder": None, "eip_private_ip": None, "routes": [], "units": {}}
+            for name, u in sorted(p.get("units", {}).items()):
+                d = {"name": name, "ip": u["ip"]}
+                try:
+                    d.update(HttpApi().ha(name))
+                except Exception:
+                    d["state"] = "unreachable"
+                pic["units"][name] = d
             try:
-                d.update(HttpApi().ha(name))
-            except Exception:
-                d["state"] = "unreachable"
-            out["units"][name] = d
-        try:
-            ids = {u["id"]: n for n, u in units().items()}
-            r = ec2_client().describe_instances(InstanceIds=list(ids))
-            for res in r["Reservations"]:
-                for inst in res["Instances"]:
-                    out["units"][ids[inst["InstanceId"]]]["ec2"] = inst["State"]["Name"]
-            if topo.get("eip_allocation_id"):
-                a = ec2_client().describe_addresses(AllocationIds=[topo["eip_allocation_id"]])["Addresses"][0]
-                eni = a.get("NetworkInterfaceId")
-                out["eip_holder"] = next((n for n, u in units().items() if u.get("untrust_eni") == eni), None)
-                out["eip_private_ip"] = a.get("PrivateIpAddress")
-            trust = {u["trust_eni"]: n for n, u in units().items() if u.get("trust_eni")}
-            if trust:
-                rts = ec2_client().describe_route_tables(
-                    Filters=[{"Name": "route.network-interface-id", "Values": list(trust)}])["RouteTables"]
-                for rt in rts:
-                    name = next((t["Value"] for t in rt.get("Tags", []) if t["Key"] == "Name"), rt["RouteTableId"])
-                    for route in rt["Routes"]:
-                        if route.get("NetworkInterfaceId") in trust:
-                            out["routes"].append({"table": name, "dest": route.get("DestinationCidrBlock", ""),
-                                                  "unit": trust[route["NetworkInterfaceId"]]})
-        except Exception as exc:
-            # Details (account id, role ARN in an AccessDenied) go to the journal, not to viewers.
-            print(json.dumps({"event": "topology_error", "error": f"{type(exc).__name__}: {exc}"[:300]}), flush=True)
-            errors.append(f"AWS lookup failed ({type(exc).__name__}).")
+                ec2 = ec2_client(p["region"])
+                ids = {u["id"]: n for n, u in p["units"].items()}
+                r = ec2.describe_instances(InstanceIds=list(ids))
+                for res in r["Reservations"]:
+                    for inst in res["Instances"]:
+                        pic["units"][ids[inst["InstanceId"]]]["ec2"] = inst["State"]["Name"]
+                if p.get("eip_allocation_id"):
+                    a_ = ec2.describe_addresses(AllocationIds=[p["eip_allocation_id"]])["Addresses"][0]
+                    eni = a_.get("NetworkInterfaceId")
+                    pic["eip_holder"] = next((n for n, u in p["units"].items() if u.get("untrust_eni") == eni), None)
+                    pic["eip_private_ip"] = a_.get("PrivateIpAddress")
+                trust = {u["trust_eni"]: n for n, u in p["units"].items() if u.get("trust_eni")}
+                if trust:
+                    rts = ec2.describe_route_tables(
+                        Filters=[{"Name": "route.network-interface-id", "Values": list(trust)}])["RouteTables"]
+                    for rt in rts:
+                        rname = next((t["Value"] for t in rt.get("Tags", []) if t["Key"] == "Name"), rt["RouteTableId"])
+                        for route in rt["Routes"]:
+                            if route.get("NetworkInterfaceId") in trust:
+                                pic["routes"].append({"table": rname, "dest": route.get("DestinationCidrBlock", ""),
+                                                      "unit": trust[route["NetworkInterfaceId"]]})
+            except Exception as exc:
+                # Details (account id, role ARN in an AccessDenied) go to the journal, not to viewers.
+                print(json.dumps({"event": "topology_error", "pair": key,
+                                  "error": f"{type(exc).__name__}: {exc}"[:300]}), flush=True)
+                errors.append(f"{pic['label']}: AWS lookup failed ({type(exc).__name__}).")
+            out["pairs"][key] = pic
         job = RUN["job"]
         if job is not None and job.status == "running" and RUN["probe"] is not None:
             out["gp_up"] = not RUN["probe"].summary()["down_now"]
@@ -739,7 +766,8 @@ def failover_history():
         rows.append({"id": d["id"], "started": d["started"], "scenario": d["scenario"], "user": d["user"],
                      "status": d["status"], "elapsed": d["elapsed"], "takeover_s": r.get("takeover_s"),
                      "failback_s": r.get("failback_s"), "outage_total_s": p.get("total_outage_s"),
-                     "outage_longest_s": p.get("longest_outage_s"), "restore": d.get("options", {}).get("restore")})
+                     "outage_longest_s": p.get("longest_outage_s"), "restore": d.get("options", {}).get("restore"),
+                     "pair": d.get("options", {}).get("pair_label", "")})
     return jsonify({"runs": rows})
 
 
@@ -754,12 +782,17 @@ def failover():
     if request.method == "POST":
         check_csrf()
         scenario = request.form.get("scenario", "")
+        pair = request.form.get("pair", "")
         if not (enabled and operator):
             audit("failover_denied", scenario=scenario)
             abort(403)
         restore = request.form.get("restore") == "1"
         if scenario not in fo.SCENARIOS:
             message = "Unknown test."
+        elif pair not in pairs():
+            message = "Unknown region / pair."
+        elif scenario == "region" and len(pairs()) < 2:
+            message = "A region outage test needs a second region."
         elif request.form.get("confirm", "") != "FAILOVER":
             message = "Type FAILOVER in the confirmation box to start."
         elif time.time() - session.get("login_at", 0) > OPERATOR_FRESH_LOGIN:
@@ -774,13 +807,14 @@ def failover():
                         holder = None if local else STORE.lease_holder()
                         message = "A test is already running" + (f" (started by {holder})" if holder else "") + "."
                     else:
-                        audit("failover_start", scenario=scenario, restore=restore)
-                        start_job(scenario, session["user"], client_ip(), restore, run_id)
+                        audit("failover_start", scenario=scenario, restore=restore, pair=pair)
+                        start_job(scenario, session["user"], client_ip(), restore, run_id, pair)
                         message = "Started. Progress appears below."
                 except StoreError as exc:
                     print(json.dumps({"event": "store_error", "error": str(exc)}), flush=True)
                     message = "The run store is unavailable, so a test cannot be started safely. Try again later."
-    meta = {"enabled": enabled, "operator": operator, "public_ip": CFG["topo"].get("public_ip", ""),
+    meta = {"enabled": enabled, "operator": operator,
+            "pairs": [{"key": k, "label": p.get("label", k), "region": p["region"]} for k, p in pairs().items()],
             "scenarios": {k: {"label": v[0], "typical": v[3], "restore": v[4], "phases": v[2]}
                           for k, v in fo.SCENARIOS.items()}}
     return page("""<div class=card><h2>Live topology</h2>
@@ -791,14 +825,17 @@ and the inspection routes point). Green = carries traffic.</p>
 {% if not meta.enabled %}<p class=err>Failover tests are not enabled in this deployment.</p>
 {% elif not meta.operator %}<p class=err>Your account is not an operator, so these tests are disabled for you.</p>
 {% else %}<form method=post id=run-form><input type=hidden name=csrf value="{{ csrf }}">
-<p>{% for key, item in meta.scenarios.items() %}<label class=scen><input type=radio name=scenario value="{{ key }}" {{ 'checked' if loop.first }}>
-{{ item.label }} <span class=muted>(about {{ (item.typical/60)|round(0, 'ceil')|int }} min)</span></label>{% endfor %}</p>
+<p><b>Region / pair:</b> {% for p in meta.pairs %}<label class=scen-inline><input type=radio name=pair value="{{ p.key }}" {{ 'checked' if loop.first }}>
+{{ p.label }} <span class=muted>({{ p.region }})</span></label> {% endfor %}</p>
+<p>{% for key, item in meta.scenarios.items() %}{% if key != 'region' or meta.pairs|length > 1 %}<label class=scen><input type=radio name=scenario value="{{ key }}" {{ 'checked' if loop.first }}>
+{{ item.label }} <span class=muted>(about {{ (item.typical/60)|round(0, 'ceil')|int }} min)</span></label>{% endif %}{% endfor %}</p>
 <p><label><input type=checkbox name=restore value=1 checked id=restore> After the test, fail back so the preferred
 primary is active again (one more short switchover, measured too)</label></p>
 <p><label>Type <code>FAILOVER</code> to confirm <input name=confirm autocomplete=off size=12></label>
 <button>Start</button></p>
 <p class=muted>Tests refuse to start unless one firewall is active and the other passive; configuration sync is
-checked and repaired first. Region failure needs a second region (not deployed here).</p></form>{% endif %}
+checked and repaired first. The region outage test stops both firewalls of the chosen region; the portal
+should then be answered by the other region through Global Accelerator.</p></form>{% endif %}
 {% if message %}<p><b>{{ message }}</b></p>{% endif %}</div>
 <div class=card><h2>Current / last run</h2><div id=run><p class=muted>Loading</p></div></div>
 <div class=card><h2>History</h2><div id=history><p class=muted>Loading</p></div></div>

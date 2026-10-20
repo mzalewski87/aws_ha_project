@@ -39,6 +39,9 @@ class Fake:
     # api
     def ha(self, u):
         self.clock()
+        if u.startswith("b"):  # a unit of the other region: always healthy here
+            return {"state": "active" if u == "b1" else "passive", "config_sync": "synchronized",
+                    "peer_state": "x", "priority": "100"}
         if not self.reachable[u]:
             raise OSError("unreachable")
         return {"state": self.ha_state[u], "config_sync": self.cfg_sync[u], "peer_state": "x",
@@ -79,9 +82,9 @@ class Fake:
         self.at(200, lambda: (self.reachable.__setitem__(u, True), self.ha_state.__setitem__(u, "passive")))
 
 
-def make(fake, **options):
+def make(fake, others=(), **options):
     job = fc.Job("t", "tester", clock=fake.clock, options=options)
-    return fc.Ctx(fake, fake, job, ["fw1", "fw2"], sleep=fake.sleep, clock=fake.clock)
+    return fc.Ctx(fake, fake, job, ["fw1", "fw2"], sleep=fake.sleep, clock=fake.clock, others=others)
 
 
 class Scenarios(unittest.TestCase):
@@ -119,6 +122,36 @@ class Scenarios(unittest.TestCase):
         ctx = make(f)
         fc.run_job(ctx, fc.rebalance)
         self.assertEqual(ctx.job.status, "done", ctx.job.steps)
+        self.assertEqual(f.calls, [])
+
+    def test_region_outage_stops_both_units_and_brings_them_back(self):
+        f = Fake()
+        orig_stop = f.stop
+        def stop_both(u):  # in a region outage nobody takes over inside the region
+            f.calls.append(("stop", u))
+            f.ec2_state[u] = "stopping"
+            f.reachable[u] = False
+            f.at(45, lambda: f.ec2_state.__setitem__(u, "stopped"))
+        f.stop = stop_both
+        def start(u):
+            f.calls.append(("start", u))
+            f.ec2_state[u] = "pending"
+            f.at(20, lambda: f.ec2_state.__setitem__(u, "running"))
+            state = "active" if u == "fw2" else "passive"  # the other unit may win the election
+            f.at(300, lambda: (f.reachable.__setitem__(u, True), f.ha_state.__setitem__(u, state)))
+        f.start = start
+        ctx = make(f, others=["b1", "b2"])
+        fc.run_job(ctx, fc.region_outage)
+        self.assertEqual(ctx.job.status, "done", ctx.job.steps)
+        self.assertEqual(f.calls[:4], [("stop", "fw1"), ("stop", "fw2"), ("start", "fw1"), ("start", "fw2")])
+        self.assertEqual(f.calls[4:], [("suspend", "fw2"), ("functional", "fw2")])  # failback to fw1
+        self.assertEqual(f.ha_state, {"fw1": "active", "fw2": "passive"})
+
+    def test_region_outage_refuses_without_a_live_other_region(self):
+        f = Fake()
+        ctx = make(f)
+        fc.run_job(ctx, fc.region_outage)
+        self.assertEqual(ctx.job.status, "failed")
         self.assertEqual(f.calls, [])
 
     def test_phases_advance_to_the_end(self):

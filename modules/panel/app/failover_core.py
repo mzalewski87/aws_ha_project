@@ -114,8 +114,12 @@ class Job:
 
 
 class Ctx:
-    def __init__(self, api, ec2, job, units, sleep=time.sleep, clock=time.monotonic):
+    """units: the pair under test. others: units of the OTHER region(s), only read (the region
+    outage test refuses to start unless another region has an active unit to take the traffic)."""
+
+    def __init__(self, api, ec2, job, units, sleep=time.sleep, clock=time.monotonic, others=()):
         self.api, self.ec2, self.job, self.units = api, ec2, job, list(units)
+        self.others = list(others)
         self.sleep, self.clock = sleep, clock
 
     def ha(self, unit):
@@ -324,6 +328,49 @@ def hard_failover(ctx):
     _restore(ctx)
 
 
+def region_outage(ctx):
+    """Take a whole region's pair down (both EC2 instances), watch the portal move to the other
+    region (Global Accelerator health checks), then bring the region back and fail back."""
+    ctx.job.enter("pre-checks")
+    if not ctx.others:
+        raise Aborted("no other region is configured: a region outage would just be an outage")
+    alive = [u for u in ctx.others if ctx.is_active(u)]
+    if not alive:
+        raise Aborted("the other region has no active firewall to take over; refusing to start")
+    x, y = find_roles(ctx)
+    ensure_synced(ctx, x, y)
+    for u in ctx.units:
+        st = ctx.ec2.state(u)
+        if st != "running":
+            raise Aborted(f"{u} EC2 instance is '{st}', not running")
+    ctx.job.log(f"this region: {x} active, {y} passive; other region active unit: {', '.join(alive)}")
+    ctx.job.enter("stop the region")
+    ctx.job.mark("EC2 stop " + " + ".join(ctx.units))
+
+    def go():
+        for u in ctx.units:
+            ctx.ec2.stop(u)
+        return ctx.wait(lambda: all(ctx.ec2.state(u) == "stopped" for u in ctx.units),
+                        "both firewalls of this region stopped", 420, 5)
+    _undo_on_abort(ctx, go, lambda: [ctx.ec2.start(u) for u in ctx.units])
+    ctx.job.mark("region down")
+    ctx.job.enter("observe")
+    ctx.job.log("observing the portal for 60s: it should now be answered by the other region")
+    ctx.sleep(60)
+    ctx.job.enter("start the region")
+    ctx.job.mark("EC2 start " + " + ".join(ctx.units))
+    for u in ctx.units:
+        ctx.ec2.start(u)
+    ctx.wait(lambda: all(ctx.ec2.state(u) == "running" for u in ctx.units), "both firewalls running", 240)
+    ctx.job.enter("boot and rejoin HA")
+    ctx.job.log("PAN-OS boots on both units and they elect an active one (typically 6-10 minutes)")
+    ctx.wait(lambda: sum(1 for u in ctx.units if ctx.is_active(u)) == 1 and
+             sum(1 for u in ctx.units if ctx.is_passive_synced(u)) == 1,
+             "one active and one passive, synchronized", 1500, 10)
+    ctx.job.mark("region back")
+    _restore(ctx)
+
+
 def rebalance(ctx):
     """Make the preferred primary active again (no other changes)."""
     ctx.job.enter("pre-checks")
@@ -369,6 +416,9 @@ SCENARIOS = {
     "hard": ("Hard failover: stop the active firewall's EC2 instance, then start it", hard_failover,
              ["pre-checks", "stop active instance", "takeover", "observe", "start instance",
               "boot and rejoin HA", RESTORE], 540, True),
+    "region": ("Region outage: stop BOTH firewalls of the region, then bring them back", region_outage,
+               ["pre-checks", "stop the region", "observe", "start the region", "boot and rejoin HA", RESTORE],
+               720, True),
     "rebalance": ("Align the pair: make the preferred primary active again", rebalance,
                   ["pre-checks", RESTORE], 60, False),
     "recover": ("Recover: start stopped firewalls, clear suspended state", recover,

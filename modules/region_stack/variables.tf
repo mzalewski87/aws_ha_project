@@ -289,3 +289,20 @@ variable "panel_alb_ingress_cidrs" {
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
+
+variable "panel_remote_pairs" {
+  description = "Firewall pairs of OTHER regions shown (and testable) in the panel: key => {label, region, eip_allocation_id, public_ip, units = {name => {ip, id, untrust_eni, trust_eni}}}. Unit names must be unique across pairs."
+  type = map(object({
+    label             = string
+    region            = string
+    eip_allocation_id = string
+    public_ip         = string
+    units = map(object({
+      ip          = string
+      id          = string
+      untrust_eni = string
+      trust_eni   = string
+    }))
+  }))
+  default = {}
+}

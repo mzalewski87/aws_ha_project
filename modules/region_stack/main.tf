@@ -314,21 +314,29 @@ module "panel" {
 
   ldap_host   = cidrhost(local.spoke2_subnets["workload"].cidrs[0], 10)
   domain_name = var.dc_domain_name
-  fw_mgmt_ips = sort(values(module.firewall.mgmt_private_ips))
+  # Status page: this region's units first, then the other regions'.
+  fw_mgmt_ips = concat(sort(values(module.firewall.mgmt_private_ips)),
+  flatten([for p in values(var.panel_remote_pairs) : sort([for u in values(p.units) : u.ip])]))
 
   # Failover tests: the panel may stop/start exactly these two instances (IAM) and run HA
   # suspend/restore on them (XML API). Probes the GP portal to measure the outage.
   enable_failover   = var.panel_enable_failover
   alb_ingress_cidrs = var.panel_alb_ingress_cidrs
-  fw_map = { for k, ip in module.firewall.mgmt_private_ips : k => {
-    ip          = ip
-    id          = module.firewall.instance_ids[k]
-    untrust_eni = module.firewall.untrust_eni_ids[k]
-    trust_eni   = module.firewall.trust_eni_ids[k]
-  } }
-  eip_allocation_id = module.firewall.public_eip_allocation_id
-  public_ip         = module.firewall.public_eip
-  gp_portal_fqdn    = var.panel_gp_fqdn
+  pairs = merge({
+    a = {
+      label             = "Region A"
+      region            = var.region
+      eip_allocation_id = module.firewall.public_eip_allocation_id
+      public_ip         = module.firewall.public_eip
+      units = { for k, ip in module.firewall.mgmt_private_ips : k => {
+        ip          = ip
+        id          = module.firewall.instance_ids[k]
+        untrust_eni = module.firewall.untrust_eni_ids[k]
+        trust_eni   = module.firewall.trust_eni_ids[k]
+      } }
+    }
+  }, var.panel_remote_pairs)
+  gp_portal_fqdn = var.panel_gp_fqdn
 
   tags = var.tags
 

@@ -157,3 +157,23 @@ output "panel_secret_arn" {
   value       = local.create_panel ? module.panel[0].secret_arn : null
   description = "Secrets Manager ARN with the panel's read-only firewall admin password."
 }
+
+output "fw_instance_ids" {
+  value       = module.firewall.instance_ids
+  description = "Firewall EC2 instance ids by fw name (panel failover tests in another region)."
+}
+
+output "fw_untrust_eni_ids" {
+  value       = module.firewall.untrust_eni_ids
+  description = "Firewall untrust ENI ids by fw name (panel topology: who holds the EIP)."
+}
+
+output "fw_trust_eni_ids" {
+  value       = module.firewall.trust_eni_ids
+  description = "Firewall trust ENI ids by fw name (panel topology: where the routes point)."
+}
+
+output "mgmt_panel_route_table_ids" {
+  value       = local.create_panel ? module.vpc_mgmt.route_table_ids_by_role["panel"] : []
+  description = "Panel subnet route tables (per AZ) — need a route to a remote region's firewall mgmt."
+}

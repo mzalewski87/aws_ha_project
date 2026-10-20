@@ -15,6 +15,7 @@
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
 @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
 label.scen { display: block; margin: .25rem 0; }
+label.scen-inline { margin-right: 1rem; }
 
 /* ---- diagrams (shared) ---- */
 svg.diagram { width: 100%; height: auto; display: block; margin: .5rem 0; }
