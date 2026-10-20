@@ -8,7 +8,12 @@ dnf install -y python3-pip jq
 mkdir -p /opt/panel
 # app code revision: ${app_sha}
 APP=$(aws secretsmanager get-secret-value --region "${region}" --secret-id "${app_secret_id}" --query SecretString --output text)
-for f in app.py panel_core.py failover_core.py; do echo "$APP" | jq -r --arg f "$f" '.[$f]' > "/opt/panel/$f"; done
+echo "$APP" | base64 -d | gunzip > /opt/panel/bundle.json
+for f in $(jq -r 'keys[]' /opt/panel/bundle.json); do
+  mkdir -p "/opt/panel/$(dirname "$f")"
+  jq -r --arg f "$f" '.[$f]' /opt/panel/bundle.json > "/opt/panel/$f"
+done
+chmod -R a+rX /opt/panel
 python3 -m venv /opt/panel/venv
 /opt/panel/venv/bin/pip install --quiet flask gunicorn requests ldap3 pycryptodome boto3  # pycryptodome: MD4 for NTLM (OpenSSL 3 dropped it)
 
@@ -22,7 +27,9 @@ PANEL_BASE_DN=${base_dn}
 PANEL_ADMIN_GROUP=${admin_group}
 PANEL_FW_IPS=${fw_ips}
 PANEL_SPOKE_HOST=${spoke_host}
-PANEL_FW_MAP_B64=${fw_map_b64}
+PANEL_TOPO_B64=${topo_b64}
+PANEL_FAILOVER_ENABLED=${failover_enabled}
+PANEL_RUNS_TABLE=${runs_table}
 PANEL_OPERATOR_GROUP=${operator_group}
 PANEL_GP_FQDN=${gp_fqdn}
 AWS_DEFAULT_REGION=${region}

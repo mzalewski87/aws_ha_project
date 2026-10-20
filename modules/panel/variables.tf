@@ -66,9 +66,19 @@ variable "enable_failover" {
   default     = false
 }
 variable "fw_map" {
-  description = "Firewall units by name: management IP (XML API) and EC2 instance id (failover tests)."
-  type        = map(object({ ip = string, id = string }))
+  description = "Firewall units by name: management IP (XML API), EC2 instance id (failover tests) and the untrust/trust ENIs (live topology: who holds the EIP, who gets the routes)."
+  type        = map(object({ ip = string, id = string, untrust_eni = string, trust_eni = string }))
   default     = {}
+}
+variable "eip_allocation_id" {
+  description = "Allocation id of the firewalls' public EIP (the topology view shows which unit holds it)."
+  type        = string
+  default     = ""
+}
+variable "public_ip" {
+  description = "The firewalls' public EIP address (display only)."
+  type        = string
+  default     = ""
 }
 variable "operator_group" {
   description = "AD group whose members (who must also be in admin_group) may run failover tests."

@@ -144,6 +144,28 @@ data "aws_caller_identity" "current" {}
 
 # Failover tests: the ONLY EC2 rights of the panel. Describe is not resource-scoped by AWS;
 # stop/start are limited to the firewall instances themselves.
+resource "aws_iam_role_policy" "topology" {
+  count = length(var.fw_map) > 0 ? 1 : 0
+  name  = "read-topology-and-runs"
+  role  = aws_iam_role.host.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Read-only; AWS does not scope these Describe calls to resources.
+        Effect   = "Allow"
+        Action   = ["ec2:DescribeInstances", "ec2:DescribeAddresses", "ec2:DescribeRouteTables"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Scan"]
+        Resource = aws_dynamodb_table.runs.arn
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy" "failover" {
   count = var.enable_failover ? 1 : 0
   name  = "failover-tests-firewalls-only"
@@ -151,11 +173,6 @@ resource "aws_iam_role_policy" "failover" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["ec2:DescribeInstances"]
-        Resource = "*"
-      },
       {
         Effect = "Allow"
         Action = ["ec2:StopInstances", "ec2:StartInstances"]
@@ -180,11 +197,28 @@ locals {
 
   # The application code travels in a second secret, not in user_data: EC2 caps user_data at
   # 16 KB and the Python files alone exceed it. The host fetches it with its instance role.
-  app_bundle = jsonencode({
-    "app.py"           = file("${path.module}/app/app.py")
-    "panel_core.py"    = file("${path.module}/app/panel_core.py")
-    "failover_core.py" = file("${path.module}/app/failover_core.py")
-  })
+  # Every .py/.js/.css under app/ except the unit tests, gzipped (a secret holds at most 64 KB).
+  app_files = {
+    for f in fileset("${path.module}/app", "**") : f => file("${path.module}/app/${f}")
+    if !startswith(basename(f), "test_") && length(regexall("\\.(py|js|css)$", f)) > 0
+  }
+  app_bundle = base64gzip(jsonencode(local.app_files))
+}
+
+# Failover runs (progress + history), shared by both hosts.
+resource "aws_dynamodb_table" "runs" {
+  name         = "${var.name_prefix}-panel-runs"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "id"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
+  point_in_time_recovery {
+    enabled = false
+  }
+  tags = var.tags
 }
 
 resource "aws_secretsmanager_secret" "app" {
@@ -228,11 +262,17 @@ resource "aws_instance" "panel" {
     fw_ips      = join(",", var.fw_mgmt_ips)
     spoke_host  = var.spoke_host
     # Failover tests (empty map = disabled; the app then hides the controls).
-    fw_map_b64     = base64encode(jsonencode(var.enable_failover ? var.fw_map : {}))
-    operator_group = var.operator_group
-    gp_fqdn        = var.gp_portal_fqdn
-    app_secret_id  = aws_secretsmanager_secret.app.id
-    app_sha        = sha256(local.app_bundle) # new code => new user_data => the hosts are replaced
+    topo_b64 = base64encode(jsonencode({
+      units             = var.fw_map
+      eip_allocation_id = var.eip_allocation_id
+      public_ip         = var.public_ip
+    }))
+    failover_enabled = var.enable_failover ? "1" : "0"
+    runs_table       = aws_dynamodb_table.runs.name
+    operator_group   = var.operator_group
+    gp_fqdn          = var.gp_portal_fqdn
+    app_secret_id    = aws_secretsmanager_secret.app.id
+    app_sha          = sha256(local.app_bundle) # new code => new user_data => the hosts are replaced
   })
   user_data_replace_on_change = true
 

@@ -100,6 +100,7 @@ def edl_show_cmd(name: str) -> str:
 
 
 HA_CMD = "<show><high-availability><state/></high-availability></show>"
+RULEBASE_CMD = "<show><running><security-policy/></running></show>"
 # Failover tests (operators only). Fixed strings: nothing from a form ever reaches them.
 HA_SUSPEND_CMD = "<request><high-availability><state><suspend/></state></high-availability></request>"
 HA_SYNC_CMD = "<request><high-availability><sync-to-remote><running-config/></sync-to-remote></high-availability></request>"
@@ -137,6 +138,7 @@ def parse_ha(text: str) -> dict:
         "state": root.findtext(".//group/local-info/state"),
         "peer_state": root.findtext(".//group/peer-info/state"),
         "config_sync": root.findtext(".//group/running-sync"),
+        "priority": root.findtext(".//group/local-info/priority"),
     }
 
 
@@ -154,6 +156,74 @@ def parse_policy_match(text: str) -> list:
     # Some releases answer with the rule block as text: `"rule-name; index: 2" { ... }`.
     body = "".join(root.itertext())
     return re.findall(r'"([^"]+?);\s*index:\s*\d+"', body)
+
+
+def _members(node):
+    """Values of an XML node that is either plain text or a list of <member>."""
+    if node is None:
+        return []
+    members = [(m.text or "").strip() for m in node.findall("member")]
+    return members if members else [(node.text or "").strip()]
+
+
+def _summ(values, limit=4):
+    """Short, display-safe summary of an address/zone list ('...' marks a truncated list)."""
+    truncated = "..." in values
+    vals = [v for v in values if v and v != "..."]
+    return {"values": vals[:limit], "count": len(vals), "more": truncated or len(vals) > limit}
+
+
+def parse_policy_match_detail(text: str):
+    """The matched rule with its criteria (entry form of `test security-policy-match`), or None."""
+    root = _root(text)
+    entry = root.find(".//rules/entry")
+    if entry is None:
+        return None
+    return {
+        "name": entry.get("name"),
+        "index": int(entry.findtext("index") or 0),
+        "from": _members(entry.find("from")),
+        "to": _members(entry.find("to")),
+        "source": _summ(_members(entry.find("source"))),
+        "destination": _summ(_members(entry.find("destination"))),
+        "application": (entry.findtext("application_service") or "").strip(),
+        "action": (entry.findtext("action") or "").strip(),
+    }
+
+
+_RULE_RE = re.compile(r'"([^"\n]+?);\s*index:\s*(\d+)"\s*\{(.*?)\n\}', re.S)
+
+
+def _field(body, name):
+    m = re.search(r"^\s*" + re.escape(name) + r"\s+(\[[^\]]*\]|[^;\n]+);", body, re.M)
+    if not m:
+        return []
+    val = m.group(1).strip()
+    return val.strip("[] ").split() if val.startswith("[") else [val]
+
+
+def parse_rulebase(text: str) -> list:
+    """Ordered security rules from `show running security-policy` (text form in the XML answer)."""
+    body = "".join(_root(text).itertext())
+    rules = []
+    for name, idx, block in _RULE_RE.findall(body):
+        action = _field(block, "action")
+        rules.append({
+            "index": int(idx), "name": name,
+            "from": _field(block, "from"), "to": _field(block, "to"),
+            "source": _summ(_field(block, "source")), "destination": _summ(_field(block, "destination")),
+            "action": action[0] if action else "",
+        })
+    return sorted(rules, key=lambda r: r["index"])
+
+
+def skip_reason(rule: dict, zfrom: str, zto: str) -> str:
+    """Why an earlier rule did not take the session (derived: zones first, then the rest)."""
+    if "any" not in rule["from"] and zfrom not in rule["from"]:
+        return f"source zone {zfrom} is not in {', '.join(rule['from']) or '-'}"
+    if "any" not in rule["to"] and zto not in rule["to"]:
+        return f"destination zone {zto} is not in {', '.join(rule['to']) or '-'}"
+    return "zones match, but address / application / service criteria do not"
 
 
 def parse_edl_sample(text: str, limit: int = 5) -> dict:

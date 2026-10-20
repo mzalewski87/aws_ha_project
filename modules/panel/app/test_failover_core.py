@@ -41,7 +41,8 @@ class Fake:
         self.clock()
         if not self.reachable[u]:
             raise OSError("unreachable")
-        return {"state": self.ha_state[u], "config_sync": self.cfg_sync[u], "peer_state": "x"}
+        return {"state": self.ha_state[u], "config_sync": self.cfg_sync[u], "peer_state": "x",
+                "priority": {"fw1": "100", "fw2": "110"}[u]}
 
     def suspend(self, u):
         self.calls.append(("suspend", u))
@@ -78,28 +79,64 @@ class Fake:
         self.at(200, lambda: (self.reachable.__setitem__(u, True), self.ha_state.__setitem__(u, "passive")))
 
 
-def make(fake):
-    job = fc.Job("t", "tester", clock=fake.clock)
+def make(fake, **options):
+    job = fc.Job("t", "tester", clock=fake.clock, options=options)
     return fc.Ctx(fake, fake, job, ["fw1", "fw2"], sleep=fake.sleep, clock=fake.clock)
 
 
 class Scenarios(unittest.TestCase):
-    def test_soft_failover_swaps_roles_and_restores(self):
+    def test_soft_failover_measures_and_fails_back_to_the_preferred_unit(self):
         f = Fake()
         ctx = make(f)
         fc.run_job(ctx, fc.soft_failover)
         self.assertEqual(ctx.job.status, "done", ctx.job.steps)
+        self.assertEqual(f.calls, [("suspend", "fw1"), ("functional", "fw1"),
+                                   ("suspend", "fw2"), ("functional", "fw2")])
+        self.assertEqual((f.ha_state["fw1"], f.ha_state["fw2"]), ("active", "passive"))
+        self.assertAlmostEqual(ctx.job.result["takeover_s"], 16, delta=3)
+        self.assertIn("failback_s", ctx.job.result)
+        self.assertEqual(ctx.job.marks[-1]["label"], "original roles restored")
+
+    def test_soft_failover_without_restore_leaves_roles_swapped(self):
+        f = Fake()
+        ctx = make(f, restore=False)
+        fc.run_job(ctx, fc.soft_failover)
+        self.assertEqual(ctx.job.status, "done", ctx.job.steps)
         self.assertEqual(f.calls, [("suspend", "fw1"), ("functional", "fw1")])
         self.assertEqual((f.ha_state["fw1"], f.ha_state["fw2"]), ("passive", "active"))
-        self.assertAlmostEqual(ctx.job.result["takeover_s"], 16, delta=3)
+
+    def test_rebalance_makes_the_preferred_unit_active(self):
+        f = Fake()
+        f.ha_state = {"fw1": "passive", "fw2": "active"}
+        ctx = make(f)
+        fc.run_job(ctx, fc.rebalance)
+        self.assertEqual(ctx.job.status, "done", ctx.job.steps)
+        self.assertEqual(f.calls, [("suspend", "fw2"), ("functional", "fw2")])
+        self.assertEqual(f.ha_state, {"fw1": "active", "fw2": "passive"})
+
+    def test_rebalance_is_a_no_op_when_already_aligned(self):
+        f = Fake()
+        ctx = make(f)
+        fc.run_job(ctx, fc.rebalance)
+        self.assertEqual(ctx.job.status, "done", ctx.job.steps)
+        self.assertEqual(f.calls, [])
+
+    def test_phases_advance_to_the_end(self):
+        f = Fake()
+        ctx = make(f)
+        ctx.job.phases = fc.phases_for("soft")
+        fc.run_job(ctx, fc.soft_failover)
+        self.assertEqual(ctx.job.to_dict()["phase"], len(ctx.job.phases))
 
     def test_hard_failover_stops_then_starts_the_active_unit_only(self):
         f = Fake()
         ctx = make(f)
         fc.run_job(ctx, fc.hard_failover)
         self.assertEqual(ctx.job.status, "done", ctx.job.steps)
-        self.assertEqual(f.calls, [("stop", "fw1"), ("start", "fw1")])
+        self.assertEqual(f.calls[:2], [("stop", "fw1"), ("start", "fw1")])
         self.assertEqual(f.ec2_state, {"fw1": "running", "fw2": "running"})
+        self.assertEqual(f.calls[2:], [("suspend", "fw2"), ("functional", "fw2")])  # failback
+        self.assertEqual(f.ha_state, {"fw1": "active", "fw2": "passive"})
 
     def test_refuses_to_start_when_pair_is_not_clean(self):
         f = Fake()
@@ -116,6 +153,7 @@ class Scenarios(unittest.TestCase):
         fc.run_job(ctx, fc.hard_failover)
         self.assertEqual(ctx.job.status, "done", ctx.job.steps)
         self.assertEqual(f.calls[0], ("sync", "fw1"))  # the ACTIVE unit pushes its config first
+        self.assertIn("forced config sync", [m["label"] for m in ctx.job.marks])
 
     def test_stays_out_of_sync_means_abort_before_touching_anything(self):
         f = Fake()
@@ -181,6 +219,16 @@ class Probe(unittest.TestCase):
             p.record(ok)
         s = p.summary()
         self.assertEqual((s["checks"], s["failed"], s["longest_outage_s"], s["down_now"]), (7, 3, 7.0, False))
+        self.assertEqual(s["outages"], [[2.0, 9.0]])
+
+    def test_two_outages_are_two_intervals(self):
+        now = [0.0]
+        p = fc.ProbeStats(clock=lambda: now[0])
+        for ok, t in [(False, 1), (True, 3), (True, 50), (False, 60), (False, 61), (True, 65)]:
+            now[0] = t
+            p.record(ok)
+        s = p.summary()
+        self.assertEqual((s["outages"], s["total_outage_s"], s["longest_outage_s"]), ([[1.0, 3.0], [60.0, 65.0]], 7.0, 5.0))
 
     def test_ongoing_outage_is_visible(self):
         now = [0.0]

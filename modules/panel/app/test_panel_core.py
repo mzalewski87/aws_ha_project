@@ -56,8 +56,8 @@ class Parsers(unittest.TestCase):
         xml = ('<response status="success"><result><enabled>yes</enabled><group><local-info>'
                '<state>active</state></local-info><peer-info><state>passive</state></peer-info>'
                '<running-sync>synchronized</running-sync></group></result></response>')
-        self.assertEqual(m.parse_ha(xml), {"enabled": "yes", "state": "active",
-                                           "peer_state": "passive", "config_sync": "synchronized"})
+        self.assertEqual(m.parse_ha(xml), {"enabled": "yes", "state": "active", "peer_state": "passive",
+                                           "config_sync": "synchronized", "priority": None})
 
     def test_policy_match_both_forms(self):
         text = '<response status="success"><result>"ipdef-outbound-alert; index: 2" {\n x;\n}</result></response>'
@@ -82,6 +82,43 @@ class Parsers(unittest.TestCase):
         self.assertIn("bad", m.api_error('<response status="error"><msg>bad</msg></response>'))
         with self.assertRaises(m.ValidationError):
             m.parse_ha("<<<not xml")
+
+
+RULEBASE = ('<response status="success"><result><member>Security policy configured on vsys1:\n'
+            '"Allow Routing for SD-WAN; index: 1" {\n        from [ zone-internal zone-to-hub ];\n'
+            '        source any;\n        to [ zone-internal zone-to-hub ];\n        destination any;\n'
+            '        application/service [0:bgp/tcp/any/179 ];\n        action allow;\n}\n\n'
+            '"ipdef-outbound-block; index: 3" {\n        from [ vpn trust ];\n        source any;\n'
+            '        to untrust;\n        destination [ 45.205.1.156 103.210.144.11 ... ];\n'
+            '        action deny;\n}\n</member></result></response>')
+
+
+class Rules(unittest.TestCase):
+    def test_rulebase_order_and_fields(self):
+        rules = m.parse_rulebase(RULEBASE)
+        self.assertEqual([r["name"] for r in rules], ["Allow Routing for SD-WAN", "ipdef-outbound-block"])
+        r = rules[1]
+        self.assertEqual((r["from"], r["to"], r["action"]), (["vpn", "trust"], ["untrust"], "deny"))
+        self.assertEqual(r["destination"], {"values": ["45.205.1.156", "103.210.144.11"], "count": 2, "more": True})
+
+    def test_skip_reason(self):
+        rules = m.parse_rulebase(RULEBASE)
+        self.assertIn("source zone trust", m.skip_reason(rules[0], "trust", "untrust"))
+        self.assertIn("criteria", m.skip_reason(rules[1], "trust", "untrust"))
+
+    def test_policy_match_detail(self):
+        text = ("<response status='success'><result><rules><entry name='spokes-outbound'><index>6</index>"
+                "<from>trust</from><source>any</source><to>untrust</to><destination>any</destination>"
+                "<application_service>0:any/any/any/app-default</application_service><action>allow</action>"
+                "</entry></rules></result></response>")
+        d = m.parse_policy_match_detail(text)
+        self.assertEqual((d["name"], d["index"], d["from"], d["action"]), ("spokes-outbound", 6, ["trust"], "allow"))
+        self.assertIsNone(m.parse_policy_match_detail('<response status="success"><result/></response>'))
+
+    def test_ha_priority(self):
+        xml = ('<response status="success"><result><group><local-info><state>passive</state>'
+               '<priority>100</priority></local-info></group></result></response>')
+        self.assertEqual(m.parse_ha(xml)["priority"], "100")
 
 
 class Limiter(unittest.TestCase):

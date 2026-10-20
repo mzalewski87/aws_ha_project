@@ -362,13 +362,20 @@ signatures target vulnerabilities that are not public, so **they cannot be trigg
 PANW documents no test method; any "simulation" can only show that the profile is active and
 read the logs for hits.
 
-### Admin panel (read-only test console)
+### Admin panel (test console)
 
 A small web panel for run C: sign in with an AD account, see each firewall's HA state and PAN-OS
-version, and ask a firewall **which rule a simulated session would hit** (`test security-policy-match`)
-— so Advanced IP Defense can be checked without sending a packet to a real malicious address. It can
-also load a sample address from one of PANW's predefined IP lists. It only **reads**: no IAM right to
-touch EC2, and the firewall account it uses has a custom role (`panel-ro`: XML-API operational commands only, no configuration access, commit, export or import). A plain `superreader` is not enough: it cannot run `test` / `request` / `show` through the XML API ("User not authorized to perform this operation"). Failover simulation is a later step.
+version, and ask the **active** firewall **which rule a simulated session would hit**
+(`test security-policy-match`) — so Advanced IP Defense can be checked without sending a packet to a
+real malicious address. The result is animated: the packet travels to the firewall, the rulebase
+(`show running security-policy`) is walked top to bottom with the reason each earlier rule was
+skipped (derived: zones first, then "address/application criteria do not match"), the matching
+rule is highlighted and the packet is either delivered or dropped, with a "why" list (zones, source
+and destination sets, application, action). It can also load a sample address from one of PANW's
+predefined IP lists, as a destination (outbound) or as a source (inbound). The firewall account it
+uses has a custom role (`panel-ro`: XML-API operational commands only, no configuration access,
+commit, export or import). A plain `superreader` is not enough: it cannot run `test` / `request` /
+`show` through the XML API ("User not authorized to perform this operation").
 
 Design: two hosts in two AZs of the management VPC (outside the firewall data path it reports on)
 behind their own ALB, so a firewall failover, a host failure or an AZ failure does not take it down.
@@ -394,9 +401,14 @@ AWS_REGION=eu-central-1 JUMP_INSTANCE_ID=... PANEL_SECRET_ARN=$(terraform output
 Failover tests (page "Failover tests", `panel_enable_failover = true` by default): an AD account that
 is in `panel-operators` (and `panel-admins`) can run
 - **soft HA failover**: `request high-availability state suspend` on the active unit, wait for the
-  peer to take over, then `functional` again;
+  peer to take over, then `functional` again (about 2 minutes with the failback);
 - **hard failover**: stop the active unit's EC2 instance, wait for the takeover, start it again and
-  wait until it is passive and synchronized;
+  wait until it is passive and synchronized (about 7-9 minutes: most of it is PAN-OS booting and
+  rejoining HA — seen live: 7 min 06 s, takeover 7.7 s, portal down 5.0 s);
+- **align the pair (failback)**: make the preferred primary (lowest HA device priority) active again.
+  Preemption is off on the pair (PANW guidance for AWS), so after a failover the roles stay swapped.
+  Soft and hard tests do this at the end by default ("fail back" checkbox), as one more short,
+  measured switchover;
 - **recover**: start a stopped firewall / clear a suspended state after an interrupted run;
 - **sync**: check running-configuration sync and repair it. Every failover test does the same
   check first: if the pair reports `not synchronized` it waits 20s (the state is often transient
@@ -406,15 +418,24 @@ is in `panel-operators` (and `panel-admins`) can run
   diverging local configuration. (Seen live: both units reported `not synchronized` for a while
   after a push, then recovered; HA1/HA2 were up throughout.)
 
-While a test runs, the panel probes the GlobalProtect portal every second and shows the takeover
-time and how long the portal was unreachable. The panel itself runs in the management VPC in two
-AZs, outside the firewall path, so it stays up. Guard rails: operators only, a typed confirmation,
-one test at a time per host, refusal to start unless the pair is a clean synchronized
-active/passive pair, every step has a timeout, every start/finish is an audit line. The hosts'
-IAM role can only `ec2:StopInstances`/`StartInstances` on the two firewall instances (plus
-`DescribeInstances`). Create the operator group with `PANEL_OPERATORS="admin" ... panel-setup.sh ad`.
-Progress lives in the memory of the host that started the test (the ALB is sticky); if that host
-is replaced mid-test use "Recover" from the other one.
+The page shows a **live topology** (refreshed every few seconds): both firewalls with HA state,
+EC2 state, config sync and priority, which unit holds the public EIP (from `DescribeAddresses`),
+which unit the inspection routes point at (`DescribeRouteTables`) and whether the GP portal answers.
+While a test runs it shows the **phases** with a progress bar, the measured **takeover** and
+**failback** times, and a **timeline** of the run with the portal outages (probed every second) and
+the key moments (stop, peer active, start, failback...). Runs are stored in a DynamoDB table
+(`<prefix>-panel-runs`), so both panel hosts show the same progress and a **history** table with the
+timings survives host replacement; a run whose host disappears shows as "interrupted".
+
+The panel itself runs in the management VPC in two AZs, outside the firewall path, so it stays up.
+Guard rails: operators only, a typed confirmation, one test at a time (checked across both hosts),
+refusal to start unless the pair is a clean active/passive pair, every step has a timeout, every
+start/finish is an audit line. The hosts' IAM role can only `ec2:StopInstances`/`StartInstances` on
+the two firewall instances, read (`DescribeInstances`/`Addresses`/`RouteTables`) and write the runs
+table. Create the operator group with `PANEL_OPERATORS="admin" ... panel-setup.sh ad`.
+
+**Region failure** cannot be tested in this deployment: path B has one region. It needs Region B
+(second firewall pair + DC replica) and Global Accelerator in front of the portal (path A has both).
 
 Known limits: the AD bind is NTLM over plain LDAP (not LDAPS) because the DC has no machine
 certificate yet — the password is not sent in clear, but the exchange is not encrypted; the

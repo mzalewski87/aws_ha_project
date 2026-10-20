@@ -1,21 +1,23 @@
 """failover_core — failover test scenarios as a small state machine, no third-party imports.
 
-The scenarios talk to the world only through three injected objects, so the whole flow can be
+The scenarios talk to the world only through injected objects, so the whole flow can be
 unit-tested with a fake cluster:
 
-  api  : ha(unit) -> {"state","peer_state","config_sync"}   (raises when unreachable)
-         suspend(unit) / functional(unit)                    (PAN-OS HA suspend / restore)
-         sync(unit)                                          (sync-to-remote of the running config)
+  api  : ha(unit) -> {"state","peer_state","config_sync","priority"}   (raises when unreachable)
+         suspend(unit) / functional(unit)            (PAN-OS HA suspend / restore)
+         sync(unit)                                  (sync-to-remote of the running config)
   ec2  : state(unit) -> "running"|"stopped"|...  stop(unit)  start(unit)
   probe: ProbeStats fed by a background GlobalProtect portal check
 
-Every wait has a timeout; a failed or timed-out step marks the job failed and leaves the cluster
-for the "recover" scenario instead of guessing.
+Every wait has a timeout; a failed or timed-out step marks the job failed and leaves the pair
+for the "recover" scenario instead of guessing. Preemption is off on the pair (PANW guidance for
+AWS), so after a test the roles stay swapped; "failback" (also run at the end of a test when
+restore is on) makes the preferred unit (lowest HA device priority) active again.
 """
 import threading
 import time
 
-UNITS_REQUIRED = 2
+MAX_OUTAGES = 200
 
 
 class Aborted(Exception):
@@ -23,67 +25,92 @@ class Aborted(Exception):
 
 
 class ProbeStats:
-    """Counts portal checks and measures outages (consecutive failures) in seconds."""
+    """Counts portal checks and records outages (consecutive failures) as time intervals."""
 
-    def __init__(self, clock=time.monotonic):
+    def __init__(self, clock=time.time, base=None):
         self.clock = clock
+        self.base = clock() if base is None else base
         self.total = 0
         self.failed = 0
-        self.longest = 0.0
-        self.outage_total = 0.0
-        self._down_since = None
+        self.outages = []  # [start, end] in seconds from base; end None while ongoing
         self._lock = threading.Lock()
 
     def record(self, ok: bool) -> None:
-        now = self.clock()
+        rel = round(self.clock() - self.base, 1)
         with self._lock:
             self.total += 1
-            if ok:
-                if self._down_since is not None:
-                    gap = now - self._down_since
-                    self.outage_total += gap
-                    self.longest = max(self.longest, gap)
-                    self._down_since = None
-            else:
+            ongoing = bool(self.outages) and self.outages[-1][1] is None
+            if ok and ongoing:
+                self.outages[-1][1] = rel
+            elif not ok:
                 self.failed += 1
-                if self._down_since is None:
-                    self._down_since = now
+                if not ongoing and len(self.outages) < MAX_OUTAGES:
+                    self.outages.append([rel, None])
 
     def summary(self) -> dict:
-        now = self.clock()
+        now = round(self.clock() - self.base, 1)
         with self._lock:
-            ongoing = (now - self._down_since) if self._down_since is not None else 0.0
+            spans = [[s, e if e is not None else now] for s, e in self.outages]
+            down = bool(self.outages) and self.outages[-1][1] is None
+            lengths = [round(e - s, 1) for s, e in spans]
             return {"checks": self.total, "failed": self.failed,
-                    "longest_outage_s": round(max(self.longest, ongoing), 1),
-                    "total_outage_s": round(self.outage_total + ongoing, 1),
-                    "down_now": self._down_since is not None}
+                    "longest_outage_s": max(lengths, default=0.0),
+                    "total_outage_s": round(sum(lengths), 1),
+                    "down_now": down, "outages": spans}
 
 
 class Job:
-    def __init__(self, scenario, user, clock=time.time):
+    def __init__(self, scenario, user, phases=(), clock=time.time, options=None):
         self.clock = clock
-        self.id = f"{int(clock())}-{scenario}"
+        self.started = clock()
+        self.id = f"{int(self.started)}-{scenario}"
         self.scenario = scenario
         self.user = user
-        self.started = clock()
+        self.options = dict(options or {})
         self.finished = None
         self.status = "running"  # running | done | failed
+        self.phases = list(phases)
+        self.phase = 0
         self.steps = []
+        self.marks = []
         self.result = {}
+        self.listeners = []  # called (job) after every change, e.g. to persist it
         self._lock = threading.Lock()
+
+    def _t(self):
+        return round(self.clock() - self.started, 1)
+
+    def _changed(self):
+        for fn in self.listeners:
+            try:
+                fn(self)
+            except Exception:  # persistence must never break a running test
+                pass
 
     def log(self, msg, level="info"):
         with self._lock:
-            self.steps.append({"t": round(self.clock() - self.started, 1), "level": level, "msg": msg})
+            self.steps.append({"t": self._t(), "level": level, "msg": msg})
+        self._changed()
 
-    def to_dict(self, probe=None):
+    def mark(self, label):
+        """A key moment for the timeline (failover triggered, peer active, roles restored...)."""
         with self._lock:
-            d = {"id": self.id, "scenario": self.scenario, "user": self.user, "status": self.status,
-                 "elapsed": round((self.finished or self.clock()) - self.started, 1),
-                 "steps": list(self.steps), "result": dict(self.result)}
-        if probe is not None:
-            d["probe"] = probe.summary()
-        return d
+            self.marks.append({"t": self._t(), "label": label})
+        self._changed()
+
+    def enter(self, name):
+        with self._lock:
+            if name in self.phases:
+                self.phase = self.phases.index(name)
+        self.log(f"-- {name}")
+
+    def to_dict(self):
+        with self._lock:
+            return {"id": self.id, "scenario": self.scenario, "user": self.user, "status": self.status,
+                    "started": self.started, "options": dict(self.options),
+                    "elapsed": round((self.finished or self.clock()) - self.started, 1),
+                    "phases": list(self.phases), "phase": self.phase,
+                    "steps": list(self.steps), "marks": list(self.marks), "result": dict(self.result)}
 
 
 class Ctx:
@@ -127,8 +154,20 @@ def find_roles(ctx):
     passive = [u for u, h in states.items() if h and h.get("state") == "passive"]
     if len(active) != 1 or len(passive) != 1:
         raise Aborted("the pair is not in a clean active/passive state: " +
-                      ", ".join(f"{u}={(h or {}).get('state', 'unreachable')}" for u, h in states.items()))
+                      ", ".join(f"{u}={(h or {}).get('state', 'unreachable')}" for u, h in states.items()) +
+                      ". Use 'Recover' first.")
     return active[0], passive[0]
+
+
+def preferred(ctx):
+    """The unit that should normally be active: lowest HA device priority (PAN-OS: lower wins)."""
+    prios = {}
+    for u in ctx.units:
+        try:
+            prios[u] = int((ctx.ha(u) or {}).get("priority") or 0) or 10**6
+        except ValueError:
+            prios[u] = 10**6
+    return sorted(ctx.units, key=lambda u: (prios[u], u))[0]
 
 
 def ensure_synced(ctx, active, passive, timeout=240):
@@ -152,6 +191,7 @@ def ensure_synced(ctx, active, passive, timeout=240):
     except Aborted:
         pass
     ctx.job.log(f"asking {active} to sync its running configuration to {passive} (sync-to-remote)")
+    ctx.job.mark("forced config sync")
     ctx.api.sync(active)
     try:
         ctx.wait(synced, "configuration synchronized after the forced sync", timeout, 5)
@@ -162,80 +202,158 @@ def ensure_synced(ctx, active, passive, timeout=240):
                       "The two units have diverging local configuration: compare them and commit on the active unit.")
 
 
+def failback(ctx):
+    """Make the preferred unit active again by suspending the current active one, then restore it."""
+    pref = preferred(ctx)
+    if ctx.is_active(pref):
+        ctx.job.log(f"{pref} (preferred primary) is already active: nothing to do")
+        return
+    cur, other = find_roles(ctx)
+    ensure_synced(ctx, cur, other)
+    ctx.job.log(f"failing back: suspending {cur} so that {pref} becomes active")
+    ctx.job.mark(f"failback: suspend {cur}")
+    ctx.api.suspend(cur)
+    t = ctx.wait(lambda: ctx.is_active(pref), f"{pref} becomes active", 180, 2)
+    ctx.job.result["failback_s"] = round(t, 1)
+    ctx.job.mark(f"{pref} active")
+    ctx.api.functional(cur)
+    ctx.wait(lambda: ctx.is_passive_synced(cur), f"{cur} rejoins as passive and synchronized", 600)
+    ctx.job.mark("original roles restored")
+
+
+def _restore(ctx):
+    if ctx.job.options.get("restore", True):
+        ctx.job.enter("failback to preferred primary")
+        failback(ctx)
+    else:
+        ctx.job.log("restore of the original roles is off for this run: roles stay swapped")
+
+
 def sync_check(ctx):
     """Check config sync of the pair and repair it from the active unit when needed."""
+    ctx.job.enter("pre-checks")
     x, y = find_roles(ctx)
     ctx.job.log(f"pair roles: {x} active, {y} passive")
+    ctx.job.enter("check and repair sync")
     ensure_synced(ctx, x, y)
 
 
 def soft_failover(ctx):
     """Suspend the active unit (the PAN-OS HA way), watch the peer take over, then restore."""
+    ctx.job.enter("pre-checks")
     x, y = find_roles(ctx)
     ensure_synced(ctx, x, y)
     ctx.job.log(f"pair is healthy: {x} active, {y} passive, synchronized")
+    ctx.job.enter("trigger failover")
     ctx.job.log(f"suspending {x} (request high-availability state suspend)")
+    ctx.job.mark(f"suspend {x}")
     ctx.api.suspend(x)
+    ctx.job.enter("takeover")
     takeover = ctx.wait(lambda: ctx.is_active(y), f"{y} becomes active", 180, 2)
     ctx.job.result["takeover_s"] = round(takeover, 1)
+    ctx.job.mark(f"{y} active")
+    ctx.job.enter("observe")
     ctx.job.log("observing the GlobalProtect portal for 20s on the new active unit")
     ctx.sleep(20)
+    ctx.job.enter("restore failed unit")
     ctx.job.log(f"restoring {x} (request high-availability state functional)")
     ctx.api.functional(x)
     ctx.wait(lambda: ctx.is_passive_synced(x), f"{x} rejoins as passive and synchronized", 600)
-    ctx.job.log(f"final roles: {y} active, {x} passive (preemption is off, so no second failover)")
+    ctx.job.mark(f"{x} passive")
+    _restore(ctx)
 
 
 def hard_failover(ctx):
     """Power the active unit off at the EC2 level, watch the takeover, then bring it back."""
+    ctx.job.enter("pre-checks")
     x, y = find_roles(ctx)
     ensure_synced(ctx, x, y)
     for u in (x, y):
         st = ctx.ec2.state(u)
         if st != "running":
             raise Aborted(f"{u} EC2 instance is '{st}', not running")
-    ctx.job.log(f"pair is healthy: {x} active, {y} passive; stopping the EC2 instance of {x}")
+    ctx.job.log(f"pair is healthy: {x} active, {y} passive")
+    ctx.job.enter("stop active instance")
+    ctx.job.log(f"stopping the EC2 instance of {x}")
+    ctx.job.mark(f"EC2 stop {x}")
     ctx.ec2.stop(x)
-    takeover = ctx.wait(lambda: ctx.is_active(y), f"{y} becomes active", 300, 3)
+    ctx.job.enter("takeover")
+    takeover = ctx.wait(lambda: ctx.is_active(y), f"{y} becomes active", 300, 2)
     ctx.job.result["takeover_s"] = round(takeover, 1)
+    ctx.job.mark(f"{y} active")
+    ctx.job.enter("observe")
     ctx.wait(lambda: ctx.ec2.state(x) == "stopped", f"{x} fully stopped", 300)
     ctx.job.log("observing the GlobalProtect portal for 20s with one firewall down")
     ctx.sleep(20)
+    ctx.job.enter("start instance")
     ctx.job.log(f"starting {x} again")
+    ctx.job.mark(f"EC2 start {x}")
     ctx.ec2.start(x)
     ctx.wait(lambda: ctx.ec2.state(x) == "running", f"{x} running", 180)
+    ctx.job.enter("boot and rejoin HA")
+    ctx.job.log("PAN-OS boots and rejoins HA (typically 4-8 minutes)")
     ctx.wait(lambda: ctx.is_passive_synced(x), f"{x} boots, rejoins as passive and synchronized", 1200, 10)
-    ctx.job.log(f"final roles: {y} active, {x} passive")
+    ctx.job.mark(f"{x} passive")
+    _restore(ctx)
+
+
+def rebalance(ctx):
+    """Make the preferred primary active again (no other changes)."""
+    ctx.job.enter("pre-checks")
+    find_roles(ctx)
+    ctx.job.enter("failback to preferred primary")
+    failback(ctx)
 
 
 def recover(ctx):
     """Put the pair back to a normal state after an aborted run."""
+    ctx.job.enter("start stopped units")
     for u in ctx.units:
         st = ctx.ec2.state(u)
         if st == "stopped":
             ctx.job.log(f"{u} is stopped: starting it")
+            ctx.job.mark(f"EC2 start {u}")
             ctx.ec2.start(u)
             ctx.wait(lambda u=u: ctx.ec2.state(u) == "running", f"{u} running", 180)
         elif st not in ("running", "pending"):
             ctx.job.log(f"{u} EC2 state is '{st}': leaving it", "warn")
+    ctx.job.enter("wait for the API")
     for u in ctx.units:
         ctx.wait(lambda u=u: ctx.ha(u) is not None, f"{u} API reachable", 900, 10)
+    ctx.job.enter("clear suspended state")
     for u in ctx.units:
         h = ctx.ha(u) or {}
         if h.get("state") == "suspended":
             ctx.job.log(f"{u} is suspended: setting it functional")
             ctx.api.functional(u)
+    ctx.job.enter("pair healthy")
     ctx.wait(lambda: sum(1 for u in ctx.units if ctx.is_active(u)) == 1 and
              sum(1 for u in ctx.units if ctx.is_passive_synced(u)) == 1,
              "one active and one passive, synchronized", 900, 10)
 
 
+RESTORE = "failback to preferred primary"
+# key -> (label, function, phases, typical duration in seconds, takes the restore option)
 SCENARIOS = {
-    "sync": ("Check and repair configuration sync (forces a sync from the active unit if needed)", sync_check),
-    "soft": ("HA failover (suspend the active firewall, then restore)", soft_failover),
-    "hard": ("Hard failover (stop the active firewall's EC2 instance, then start it)", hard_failover),
-    "recover": ("Recover the pair (start stopped firewalls, clear suspended state)", recover),
+    "sync": ("Check and repair configuration sync", sync_check,
+             ["pre-checks", "check and repair sync"], 10, False),
+    "soft": ("HA failover: suspend the active firewall, then restore it", soft_failover,
+             ["pre-checks", "trigger failover", "takeover", "observe", "restore failed unit", RESTORE], 90, True),
+    "hard": ("Hard failover: stop the active firewall's EC2 instance, then start it", hard_failover,
+             ["pre-checks", "stop active instance", "takeover", "observe", "start instance",
+              "boot and rejoin HA", RESTORE], 540, True),
+    "rebalance": ("Align the pair: make the preferred primary active again", rebalance,
+                  ["pre-checks", RESTORE], 60, False),
+    "recover": ("Recover: start stopped firewalls, clear suspended state", recover,
+                ["start stopped units", "wait for the API", "clear suspended state", "pair healthy"], 60, False),
 }
+
+
+def phases_for(scenario, restore=True):
+    phases = list(SCENARIOS[scenario][2])
+    if SCENARIOS[scenario][4] and not restore:
+        phases = [p for p in phases if p != RESTORE]
+    return phases
 
 
 def run_job(ctx, fn):
@@ -244,6 +362,7 @@ def run_job(ctx, fn):
     try:
         fn(ctx)
         job.status = "done"
+        job.phase = len(job.phases)
         job.log("finished OK")
     except Aborted as exc:
         job.status = "failed"
@@ -255,3 +374,4 @@ def run_job(ctx, fn):
         job.log("the pair may be in an unusual state: use 'Recover' to restore it", "warn")
     finally:
         job.finished = job.clock()
+        job._changed()
