@@ -343,3 +343,15 @@ variable "edl_server_ip" {
   type        = string
   default     = ""
 }
+
+variable "guac_rdp_source_cidrs" {
+  description = "Guacamole host subnet(s) allowed RDP to the DC through the firewalls. Empty disables the rule."
+  type        = list(string)
+  default     = []
+}
+
+variable "dc_private_ip" {
+  description = "Domain controller private IP (destination of the Guacamole RDP allow rule)."
+  type        = string
+  default     = ""
+}

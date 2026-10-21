@@ -21,6 +21,7 @@ locals {
   init_cfg = {
     for name in var.fw_hostnames : name => templatefile("${path.module}/templates/init-cfg.txt.tpl", {
       hostname                              = name
+      management_mode                       = var.management_mode
       panorama_server                       = var.panorama_server
       panorama_template_stack               = var.panorama_template_stack
       panorama_device_group                 = var.panorama_device_group

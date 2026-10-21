@@ -45,3 +45,13 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "health_check_threshold" {
+  description = "Consecutive failed (or passed) health checks before an endpoint changes state (1-10). 1 = fastest region failover."
+  type        = number
+  default     = 1
+  validation {
+    condition     = var.health_check_threshold >= 1 && var.health_check_threshold <= 10
+    error_message = "health_check_threshold must be 1-10 (Global Accelerator's range)."
+  }
+}

@@ -32,8 +32,11 @@ resource "aws_route53_zone" "sub" {
 }
 
 # Portal record -> Global Accelerator anycast IPs (or a single portal EIP).
+# count must not depend on the list's LENGTH: with Global Accelerator the IPs are only known
+# after apply, and "Invalid count argument" then blocked the first apply that enables it
+# (seen live). The root always passes at least one address when the domain is on.
 resource "aws_route53_record" "portal" {
-  count   = local.on && length(var.portal_target_ips) > 0 ? 1 : 0
+  count   = local.on ? 1 : 0
   zone_id = aws_route53_zone.sub[0].zone_id
   name    = local.portal_fqdn
   type    = "A"
@@ -72,6 +75,12 @@ resource "acme_certificate" "wildcard" {
   account_key_pem           = acme_registration.this[0].account_key_pem
   common_name               = local.wildcard
   subject_alternative_names = [var.subdomain_zone] # apex too, so gp.<zone> + <zone>
+
+  # lego looks the zone up and polls propagation through a recursive resolver. The machine's
+  # own resolver can hold the PREVIOUS delegation for the old NS TTL (a re-delegated zone
+  # sat cached for ~26 h and failed with "could not find zone _acme-challenge..."), so ask
+  # public resolvers instead.
+  recursive_nameservers = ["1.1.1.1:53", "8.8.8.8:53"]
 
   dns_challenge {
     provider = "route53"

@@ -56,3 +56,9 @@ variable "acm_certificate_arn" {
   type        = string
   default     = ""
 }
+
+variable "web_acl_id" {
+  description = "ARN of a CLOUDFRONT-scope WAF web ACL to attach (empty = none)."
+  type        = string
+  default     = ""
+}

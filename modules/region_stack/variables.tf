@@ -30,8 +30,17 @@ variable "spoke1_vpc_cidr" { type = string }
 variable "spoke2_vpc_cidr" { type = string }
 
 # --- Panorama (single Panorama manages all regions — ADR D6) ----------------
+variable "management_mode" {
+  description = "Central management plane: \"panorama\" (path A, self-hosted Panorama) or \"scm\" (path B, Strata Cloud Manager - no Panorama EC2)."
+  type        = string
+  default     = "panorama"
+  validation {
+    condition     = contains(["panorama", "scm"], var.management_mode)
+    error_message = "management_mode must be \"panorama\" or \"scm\"."
+  }
+}
 variable "create_panorama" {
-  description = "Deploy Panorama + SSM jump host in this region (true for the primary region only)."
+  description = "Primary region (true for Region A only): path A deploys Panorama + its SSM jump host here; path B (scm) deploys the SSM jump host only. Guacamole and the panel also live only in this region."
   type        = bool
   default     = true
 }
@@ -229,4 +238,88 @@ variable "create_pki" {
   description = "Two-tier AD CS PKI (offline root + enterprise issuing CA) in spoke2. Mandatory component: the firewall's SSL Forward Proxy re-signing CA is issued by this PKI and domain members trust it automatically. Requires create_dc."
   type        = bool
   default     = true
+}
+
+variable "create_guacamole" {
+  description = "Deploy the Guacamole RDP gateway (mgmt VPC) for browser-based access to the DC. Primary region only; needs create_dc."
+  type        = bool
+  default     = false
+}
+variable "guac_certificate_arn" {
+  description = "Issued ACM certificate ARN for the Guacamole hostname (required when create_guacamole)."
+  type        = string
+  default     = ""
+}
+variable "guac_rdp_username" {
+  description = "Optional RDP username pre-provisioned in the Guacamole DC connection (empty = prompt at connect)."
+  type        = string
+  default     = ""
+}
+variable "guac_rdp_password" {
+  description = "Optional RDP password for the pre-provisioned connection (Secrets Manager only; empty = prompt)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "create_panel" {
+  description = "Deploy the admin/test panel (2 hosts in 2 AZs + ALB, mgmt VPC). Primary region only; needs create_dc."
+  type        = bool
+  default     = false
+}
+variable "panel_certificate_arn" {
+  description = "Issued ACM certificate ARN for the panel hostname (required when create_panel)."
+  type        = string
+  default     = ""
+}
+
+variable "panel_enable_failover" {
+  description = "Let panel operators run failover tests (adds an IAM role limited to stop/start of the firewall instances)."
+  type        = bool
+  default     = false
+}
+variable "panel_gp_fqdn" {
+  description = "GlobalProtect portal FQDN the panel probes during failover tests."
+  type        = string
+  default     = ""
+}
+
+variable "panel_alb_ingress_cidrs" {
+  description = "CIDRs allowed to reach the panel ALB."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "panel_remote_pairs" {
+  description = "Firewall pairs of OTHER regions shown (and testable) in the panel: key => {label, region, eip_allocation_id, public_ip, units = {name => {ip, id, untrust_eni, trust_eni}}}. Unit names must be unique across pairs."
+  type = map(object({
+    label             = string
+    region            = string
+    eip_allocation_id = string
+    public_ip         = string
+    units = map(object({
+      ip          = string
+      id          = string
+      untrust_eni = string
+      trust_eni   = string
+    }))
+  }))
+  default = {}
+}
+
+variable "panel_ga_arn" {
+  description = "Global Accelerator ARN for the panel's topology view (empty = none)."
+  type        = string
+  default     = ""
+}
+
+variable "app_nlb_cloudfront_only" {
+  description = "Restrict the app NLB to CloudFront's origin-facing ranges (replaces an existing NLB when turned on)."
+  type        = bool
+  default     = false
+}
+variable "app_web_acl_id" {
+  description = "CLOUDFRONT-scope WAF web ACL ARN for the app distribution (empty = none)."
+  type        = string
+  default     = ""
 }

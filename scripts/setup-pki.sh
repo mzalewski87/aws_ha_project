@@ -45,6 +45,11 @@ SUB_ID="${SUB_CA_ID:?SUB_CA_ID required}"
 DOMAIN="${DOMAIN:?DOMAIN required}"
 DA="${DOMAIN_ADMIN:?DOMAIN_ADMIN required}"
 DP="${DOMAIN_PASSWORD:?DOMAIN_PASSWORD required}"
+# Both go inside single-quoted PowerShell strings, where a ' is written ''.
+DA="${DA//\'/\'\'}"
+DP="${DP//\'/\'\'}"
+# Note: RunCommand keeps the command text (including this password) in the SSM command
+# history for its retention period. Use a lab-only domain admin and rotate it afterwards.
 SUB_CN="${SUB_CA_CN:-PANW Lab Issuing CA}"
 ROOT_CN="${CA_ROOT_CN:-PANW Lab Root CA}"
 POLL_MAX="${PKI_POLL_MAX:-1800}"   # how long any single step may run
@@ -66,18 +71,20 @@ run_ps() { # $1 = instance, $2 = powershell, $3 = label, $4 = delivery timeout
   # payload looking for key=value pairs and list indices and falls over on
   # ordinary script text with errors that name nothing in the script
   # ("invalid literal for int() with base 10: 'key'"). A JSON file bypasses it.
-  pfile="/tmp/pki-params-${label}.json"
+  # Private temp file: several payloads embed the domain admin password.
+  pfile="$(umask 077; mktemp "${TMPDIR:-/tmp}/pki-params.XXXXXX")"
   printf '%s' "$ps" | jq -R -s '{commands: (rtrimstr("\n") | split("\n"))}' > "$pfile" || {
-    echo "[pki] could not build the parameter JSON for $label" >&2; exit 1; }
+    rm -f "$pfile"; echo "[pki] could not build the parameter JSON for $label" >&2; exit 1; }
   if ! cid="$(aws ssm send-command --region "$REGION" --instance-ids "$inst" \
         --document-name AWS-RunPowerShellScript \
         --parameters "file://${pfile}" \
         --timeout-seconds "$tmo" \
         --query 'Command.CommandId' --output text 2>&1)"; then
     echo "[pki] send-command failed for $label: $cid" >&2
-    echo "[pki] payload left at $pfile for inspection" >&2
+    if [ -n "${PKI_DEBUG:-}" ]; then echo "[pki] payload kept at $pfile (PKI_DEBUG)" >&2; else rm -f "$pfile"; fi
     exit 1
   fi
+  [ -n "${PKI_DEBUG:-}" ] || rm -f "$pfile"
   # --timeout-seconds bounds DELIVERY, not execution: a command can legitimately
   # run for longer, so poll against our own deadline rather than reusing $tmo.
   local status="" deadline=$(( $(date +%s) + POLL_MAX ))
@@ -167,6 +174,33 @@ wait_ssm() { # $1 = instance, $2 = label
 wait_ssm "$ROOT_ID" "root CA"
 wait_ssm "$SUB_ID"  "issuing CA"
 
+# --- 1b. the issuing CA must be a domain member -------------------------------
+# The host joins the domain from its own user-data at boot, but that loop gives up after ~20
+# minutes. When the CA hosts start together with the DC, the domain can come up late, or the
+# account used for the join can still be missing (it is created by a later Terraform step), and
+# the loop ends with "domain join never succeeded". Install-AdcsCertificationAuthority then fails
+# with the misleading "The user name or password is incorrect". So verify membership here and
+# join now if needed, rather than depend on boot timing.
+say "checking that the issuing CA is a domain member"
+joined="$(run_ps "$SUB_ID" "(Get-WmiObject Win32_ComputerSystem).PartOfDomain" "sub-membership" 120 | tr -d '[:space:]')"
+if [ "$joined" != "True" ]; then
+  say "issuing CA is not in the domain (the boot-time join gave up) - joining it now"
+  run_ps "$SUB_ID" "
+\$ErrorActionPreference='Stop'
+\$pw   = ConvertTo-SecureString '${DP}' -AsPlainText -Force
+\$cred = New-Object System.Management.Automation.PSCredential('${DA}@${DOMAIN}', \$pw)
+Add-Computer -DomainName '${DOMAIN}' -Credential \$cred -Force -ErrorAction Stop
+shutdown.exe /r /t 20 /f
+'joined, restarting'
+" "sub-join" 300 >/dev/null
+  say "waiting for the issuing CA to restart"
+  sleep 90
+  wait_ssm "$SUB_ID" "issuing CA (after join)"
+  joined="$(run_ps "$SUB_ID" "(Get-WmiObject Win32_ComputerSystem).PartOfDomain" "sub-membership2" 600 | tr -d '[:space:]')"
+  [ "$joined" = "True" ] || { echo "[pki] issuing CA is still not a domain member" >&2; exit 1; }
+fi
+say "issuing CA is a domain member"
+
 # --- 2. root CA: issue automatically, refresh the CRL ------------------------
 # A standalone CA holds every request pending and expects a human in the CA
 # console. There is no human here, and the pending->resubmit dance is fragile: a
@@ -226,6 +260,38 @@ certutil -setreg chain\\ChainCacheResyncFiletime @now 2>&1 | Out-Null
 gpupdate /force | Out-Null
 'published'
 " "ad-publish" 600
+
+# The block above runs as SYSTEM. On a domain member that is the COMPUTER account, which may
+# not write into the forest's Certification Authorities container, and every certutil call
+# there is piped to Out-Null — so the root could silently never reach AD (seen live: the
+# container was empty although this step reported success, and no domain member ever trusted
+# the root). Publish again with a real domain-admin token, show certutil's exit codes, and then
+# CHECK the container instead of assuming.
+say "publishing the root into AD as domain admin"
+PUB_OUT="$(run_ps_admin "\$o = @()
+\$o += 'WHOAMI=' + (whoami)
+\$o += (certutil -f -dspublish C:\\root.cer RootCA 2>&1 | Out-String)
+\$o += 'ROOTCA_EXIT=' + \$LASTEXITCODE
+\$o += (certutil -f -dspublish C:\\root.cer NTAuthCA 2>&1 | Out-String)
+\$o += 'NTAUTH_EXIT=' + \$LASTEXITCODE
+\$o += (certutil -f -dspublish C:\\root.crl 2>&1 | Out-String)
+\$o += 'CRL_EXIT=' + \$LASTEXITCODE
+\$o | Out-File C:\\pki-step.log -Encoding ascii" "ad-publish-admin")"
+printf '%s\n' "$PUB_OUT" | sed 's/^/[pki]   /'
+
+say "verifying that the root is in the AD Certification Authorities container"
+in_ad="$(run_ps "$SUB_ID" "
+\$cfg = ([ADSI]'LDAP://RootDSE').configurationNamingContext
+\$s = [adsisearcher]'(objectClass=certificationAuthority)'
+\$s.SearchRoot = [ADSI](\"LDAP://CN=Certification Authorities,CN=Public Key Services,CN=Services,\" + \$cfg)
+\$s.SearchScope = 'OneLevel'
+\$names = @(\$s.FindAll() | ForEach-Object { \$_.Properties['cn'] })
+'IN_AD=' + ((\$names -join ',') -like '*${ROOT_CN}*')
+" "ad-publish-verify" 300 | tr -d '[:space:]')"
+case "$in_ad" in
+  *IN_AD=True*) say "root CA is published in AD" ;;
+  *) echo "[pki] the root CA is NOT in the AD Certification Authorities container - domain members will not trust it" >&2; exit 1 ;;
+esac
 
 # --- 5. issuing CA: install the role, producing a CSR ------------------------
 # Install-AdcsCertificationAuthority for a subordinate returns 398 ("the CA

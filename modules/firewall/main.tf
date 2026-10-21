@@ -38,7 +38,15 @@ locals {
     untrust = { subnet_id = var.untrust_subnet_id, subnet_cidr = var.untrust_subnet_cidr, sg = var.untrust_sg_id, device_index = 3, dataplane = true }
   }
 
-  # fw x nic -> ENI definition. fw1's untrust ENI gets the extra floating IP.
+  # fw x nic -> ENI definition. fw1's untrust AND trust ENIs get an extra floating
+  # secondary IP. The PAN-OS AWS HA plugin (secondary-IP mode) moves the secondary IPs of
+  # the failed unit's dataplane ENIs to the peer and, with them, rewrites the route-table
+  # entries that point at those ENIs. An ENI without a secondary IP is left alone: with
+  # the floating IP on untrust only (as before), the EIP followed every failover but the
+  # TGW inspection routes kept pointing at the now-passive unit's trust ENI, black-holing
+  # all east-west / spoke traffic. Seen live in path B (PAN-OS 12.2.4, plugin 6.2.1).
+  # The PANW guide asks for this too: "Add a secondary IP address to your dataplane
+  # interfaces on the first (to be active) HA peer".
   fw_nics = {
     for combo in setproduct(local.fw_names, keys(local.nic_types)) :
     "${combo[0]}-${combo[1]}" => {
@@ -48,7 +56,7 @@ locals {
       sg           = local.nic_types[combo[1]].sg
       device_index = local.nic_types[combo[1]].device_index
       dataplane    = local.nic_types[combo[1]].dataplane
-      private_ips = (combo[1] == "untrust" && combo[0] == "fw1") ? [
+      private_ips = (contains(["untrust", "trust"], combo[1]) && combo[0] == "fw1") ? [
         cidrhost(local.nic_types[combo[1]].subnet_cidr, var.fw_host_offsets[combo[0]]),
         cidrhost(local.nic_types[combo[1]].subnet_cidr, var.floating_host_offset),
         ] : [
@@ -57,7 +65,8 @@ locals {
     }
   }
 
-  floating_ip = cidrhost(var.untrust_subnet_cidr, var.floating_host_offset)
+  floating_ip       = cidrhost(var.untrust_subnet_cidr, var.floating_host_offset)
+  trust_floating_ip = cidrhost(var.trust_subnet_cidr, var.floating_host_offset)
 }
 
 data "aws_ami" "vmseries" {
@@ -81,20 +90,33 @@ data "aws_ami" "vmseries" {
 resource "aws_network_interface" "fw" {
   for_each = local.fw_nics
 
-  subnet_id         = each.value.subnet_id
-  private_ips       = each.value.private_ips
-  security_groups   = [each.value.sg]
-  source_dest_check = each.value.dataplane ? false : true
-  tags              = merge(var.tags, { Name = "${var.name_prefix}-${each.value.fw}-${each.value.nic_type}" })
+  subnet_id = each.value.subnet_id
+  # ORDERED list: the first address is the PRIMARY. `private_ips` is a SET, so which address
+  # AWS made primary was arbitrary — and "10.20.10.100" sorts before "10.20.10.11". Seen live
+  # in Region B: fw1's untrust ENI got the FLOATING .100 as its primary and its own .11 as the
+  # secondary. The AWS HA plugin moves secondaries and maps primary->primary, so a failover
+  # moved .11 (not the floating IP) and put the EIP on fw2's own .12: portal and gateway dead.
+  private_ip_list_enabled = true
+  private_ip_list         = each.value.private_ips
+  security_groups         = [each.value.sg]
+  source_dest_check       = each.value.dataplane ? false : true
+  tags                    = merge(var.tags, { Name = "${var.name_prefix}-${each.value.fw}-${each.value.nic_type}" })
 
-  # The untrust ENIs carry the floating IP as a SECONDARY address, and the
+  # The untrust and trust ENIs carry a floating IP as a SECONDARY address, and the
   # PAN-OS AWS HA plugin moves it between the pair on failover
   # (AssignPrivateIpAddresses). That makes `private_ips` runtime-owned: after a
   # failover Terraform wants to put the floating IP back on fw1, fighting the
   # plugin and stranding the address on the passive unit. The primary IP is set
-  # at creation and never changes, so ignoring the list is safe.
+  # at creation and never changes, so ignoring the lists is safe. (private_ip_list_enabled is
+  # ignored too, so ENIs created before the ordered list existed are not touched.)
   lifecycle {
-    ignore_changes = [private_ips]
+    ignore_changes = [private_ips, private_ip_list, private_ip_list_enabled]
+    # Fail loudly if AWS ever made another address the primary (e.g. the floating IP): HA
+    # failover would then move the wrong address. Checked on every plan/apply.
+    postcondition {
+      condition     = self.private_ip == each.value.private_ips[0]
+      error_message = "ENI ${each.key}: primary is ${self.private_ip}, expected ${each.value.private_ips[0]}. The floating IP must be a secondary; recreate this ENI and its firewall (docs/DEPLOYMENT-SCM.md, HA failover)."
+    }
   }
 }
 
@@ -166,6 +188,13 @@ resource "aws_instance" "fw" {
   metadata_options {
     http_endpoint = "enabled"
     http_tokens   = "required" # IMDSv2 (bootstrap read path)
+  }
+
+  # The Marketplace VM-Series AMI's root volume does NOT delete on termination, so every
+  # destroy/replace orphaned a 60 GB volume that kept billing (found live: 4 leftovers
+  # after one teardown). Make it follow the instance.
+  root_block_device {
+    delete_on_termination = true
   }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-${each.key}" })

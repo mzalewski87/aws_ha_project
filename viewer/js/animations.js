@@ -21,14 +21,26 @@ class TrafficFlowAnimator {
     this.currentFlow = this.flows.find(f => f.id === flowId);
     if (!this.currentFlow) return;
 
+    // A flow tied to one management path (Panorama vs SCM) switches the
+    // diagram to that path first, otherwise its nodes are not drawn.
+    if (this.currentFlow.mgmtPath && window.app) {
+      window.app.setMgmtPath(this.currentFlow.mgmtPath, { silent: true });
+    }
+
     // Expand relevant zones if subnets or cross-region are involved
-    if (["flow-gp-vpn", "flow-inbound-app", "flow-outbound-egress", "flow-east-west"].includes(flowId)) {
+    if (this.currentFlow.expandSecurity ||
+        ["flow-gp-vpn", "flow-inbound-app", "flow-outbound-egress", "flow-east-west"].includes(flowId)) {
       if (!this.diagram.securityVpcExpanded) {
         this.diagram.securityVpcExpanded = true;
         this.diagram.render();
       }
     }
-    if (["flow-mgmt-plane", "flow-ad-replication"].includes(flowId)) {
+    if (this.currentFlow.collapseSecurity && this.diagram.securityVpcExpanded) {
+      this.diagram.securityVpcExpanded = false;
+      this.diagram.render();
+    }
+    if (this.currentFlow.expandRegionB ||
+        ["flow-mgmt-plane", "flow-ad-replication"].includes(flowId)) {
       if (this.diagram.regionBCollapsed) {
         this.diagram.regionBCollapsed = false;
         this.diagram.render();
@@ -125,6 +137,11 @@ class TrafficFlowAnimator {
       <circle r="4" fill="#FFFFFF" />
     `;
 
+    // Park the particle on its start point, hidden until its delay elapses;
+    // otherwise delayed particles sat visibly at the scene origin (0,0).
+    particleGroup.setAttribute("transform", `translate(${x1}, ${y1})`);
+    if (delayMs > 0) particleGroup.style.opacity = "0";
+
     this.animLayer.appendChild(particleGroup);
     this.activeParticles.push(particleGroup);
 
@@ -139,6 +156,7 @@ class TrafficFlowAnimator {
         return;
       }
 
+      particleGroup.style.opacity = "";
       const elapsed = currentTime - startTime;
       const progress = Math.min((elapsed % duration) / duration, 1);
 

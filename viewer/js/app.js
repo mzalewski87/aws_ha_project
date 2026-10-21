@@ -10,13 +10,20 @@ const UI_TRANSLATIONS = {
     tab_flows: "Przepływy Ruchu",
     tab_scenarios: "Symulator Awarii",
     tab_presentation: "Prezentacja Klienta",
-    search_placeholder: "Szukaj (np. HA2, TGW, EIP, IP)...",
+    search_placeholder: "Szukaj (np. HA2, SCM, WAF, EIP)...",
     nav_level: "POZIOM:",
     nav_overview: "🌐 Overview",
     nav_ha: "🛡️ Klaster HA (Security)",
     nav_rega: "⚡ Region A (Frankfurt)",
-    nav_regb: "🔄 Region B (Dublin DR)",
-    nav_mgmt: "🔐 Panorama & SSM",
+    nav_regb: "🔄 Region B (Dublin)",
+    nav_mgmt: "🔐 Zarządzanie",
+    path_label: "Ścieżka zarządzania (D11)",
+    path_btn_a: "A · Panorama",
+    path_btn_b: "B · Strata Cloud Manager",
+    path_desc_a: "<strong>Ścieżka A:</strong> samodzielna Panorama (EC2, m5.4xlarge) w Mgmt VPC Regionu A zarządza oboma regionami przez TGW peering. Template stack + device group, PAN-OS przypięty (domyślnie 11.1.15, Panorama ≥ FW).",
+    path_desc_b: "<strong>Ścieżka B:</strong> Strata Cloud Manager (SaaS), bez EC2 Panoramy. Firewalle startują z <code>panorama-server=cloud</code> + PIN rejestracyjny; jeden folder SCM trzyma pary obu regionów (zmienne per-urządzenie); HA konfigurowane z SCM; logical router ARE; PAN-OS min. 12.2.4.",
+    badge_ver_a: "PAN-OS 11.1.15 · Panorama",
+    badge_ver_b: "PAN-OS 12.2.4+ · SCM",
     pres_prev: "⬅ Poprzedni Slajd",
     pres_next: "Następny Slajd ➔",
     pres_counter: (curr, total) => `SLAJD ${curr} Z ${total}`,
@@ -38,16 +45,18 @@ const UI_TRANSLATIONS = {
     panel_overview_html: `
       <div style="font-size:12.5px; color:var(--text-muted); line-height:1.5;">
         <p style="margin-bottom:12px;">Projekt dostarcza wysoko dostępną bramę <strong>Palo Alto Networks GlobalProtect</strong> z centralną inspekcją <strong>AWS Transit Gateway</strong> w modelu Multi-Region.</p>
+        <div id="mgmt-path-switch"></div>
         <div class="callout-box" style="margin-bottom:12px;">
           <strong>Wskazówka Prezentacyjna:</strong> Kliknij dowolny element na schemacie, aby otworzyć szczegółowy panel techniczny z danymi o interfejsach, IP, tabelach tras i kodzie Terraform.
         </div>
         <h4 style="color:#fff; font-size:13px; margin:14px 0 8px 0;">Filary Projektu:</h4>
         <ul style="margin-left:18px; display:flex; flex-direction:column; gap:6px; font-size:12px;">
-          <li><strong>Active/Passive VM-Series:</strong> Failover z wtyczką AWS HA (preemption wyłączone).</li>
-          <li><strong>AWS Global Accelerator:</strong> Failover Anycast całego regionu (~30s: health-check 10s x 3).</li>
+          <li><strong>Active/Passive VM-Series:</strong> wtyczka AWS HA (tryb secondary-IP) przenosi oba pływające IP (EIP idzie za nimi) i trasy TGW; przejęcie ~1–8 s, ~5 s przerwy portalu.</li>
+          <li><strong>AWS Global Accelerator:</strong> oba regiony z dial 100% — każdy klient trafia do najbliższego zdrowego regionu (Polska ➔ Region A); health-check 10 s, próg 1.</li>
           <li><strong>TGW Appliance Mode:</strong> Wymuszenie symetrii sesji międzystrefowych.</li>
-          <li><strong>Pojedyncza Panorama:</strong> Zarządzanie przez prywatny TGW Peering.</li>
-          <li><strong>Zero-Bastion:</strong> Pełny dostęp przez SSM Session Manager.</li>
+          <li><strong>Dwie ścieżki zarządzania:</strong> A = Panorama EC2, B = Strata Cloud Manager (jeden folder dla obu regionów).</li>
+          <li><strong>Zero-Bastion:</strong> SSM Session Manager; Guacamole (RDP w przeglądarce, TOTP) do DC przez firewalle.</li>
+          <li><strong>Laboratorium ścieżki B:</strong> panel admina/testów, AWS WAF, strona testowa przez CloudFront, Advanced IP Defense, Frontier Virtual Patching, PKI AD CS.</li>
         </ul>
       </div>
     `,
@@ -65,13 +74,20 @@ const UI_TRANSLATIONS = {
     tab_flows: "Traffic Flows",
     tab_scenarios: "Failure Simulator",
     tab_presentation: "Client Presentation",
-    search_placeholder: "Search (e.g. HA2, TGW, EIP, IP)...",
+    search_placeholder: "Search (e.g. HA2, SCM, WAF, EIP)...",
     nav_level: "LEVEL:",
     nav_overview: "🌐 Overview",
     nav_ha: "🛡️ HA Cluster (Security)",
     nav_rega: "⚡ Region A (Frankfurt)",
-    nav_regb: "🔄 Region B (Dublin DR)",
-    nav_mgmt: "🔐 Panorama & SSM",
+    nav_regb: "🔄 Region B (Dublin)",
+    nav_mgmt: "🔐 Management",
+    path_label: "Management path (D11)",
+    path_btn_a: "A · Panorama",
+    path_btn_b: "B · Strata Cloud Manager",
+    path_desc_a: "<strong>Path A:</strong> a self-hosted Panorama (EC2, m5.4xlarge) in the Region A Mgmt VPC manages both regions over TGW peering. Template stack + device group; PAN-OS pinned (default 11.1.15, Panorama ≥ firewalls).",
+    path_desc_b: "<strong>Path B:</strong> Strata Cloud Manager (SaaS), no Panorama EC2. Firewalls bootstrap with <code>panorama-server=cloud</code> + a registration PIN; one SCM folder holds both regions' pairs (per-device variables); HA is configured from SCM; Advanced Routing Engine logical router; PAN-OS 12.2.4 minimum.",
+    badge_ver_a: "PAN-OS 11.1.15 · Panorama",
+    badge_ver_b: "PAN-OS 12.2.4+ · SCM",
     pres_prev: "⬅ Previous Slide",
     pres_next: "Next Slide ➔",
     pres_counter: (curr, total) => `SLIDE ${curr} OF ${total}`,
@@ -93,16 +109,18 @@ const UI_TRANSLATIONS = {
     panel_overview_html: `
       <div style="font-size:12.5px; color:var(--text-muted); line-height:1.5;">
         <p style="margin-bottom:12px;">This project delivers an enterprise, resilient <strong>Palo Alto Networks GlobalProtect</strong> gateway with central <strong>AWS Transit Gateway</strong> inspection in a Multi-Region model.</p>
+        <div id="mgmt-path-switch"></div>
         <div class="callout-box" style="margin-bottom:12px;">
           <strong>Presentation Tip:</strong> Click any component on the diagram to open the technical deep-dive specification drawer with interface mapping, IP addressing, route tables, and Terraform details.
         </div>
         <h4 style="color:#fff; font-size:13px; margin:14px 0 8px 0;">Architecture Pillars:</h4>
         <ul style="margin-left:18px; display:flex; flex-direction:column; gap:6px; font-size:12px;">
-          <li><strong>Active/Passive VM-Series:</strong> Automated failover via AWS HA Plugin (preemption disabled).</li>
-          <li><strong>AWS Global Accelerator:</strong> Anycast regional failover bypassing DNS TTL (~30s: 10s health check x 3 threshold).</li>
+          <li><strong>Active/Passive VM-Series:</strong> the AWS HA plugin (secondary-IP mode) moves both floating IPs (the EIP follows) and the TGW routes; takeover ~1–8 s, ~5 s portal outage.</li>
+          <li><strong>AWS Global Accelerator:</strong> both regions at a 100% traffic dial — every client goes to its nearest healthy region (Poland ➔ Region A); health check 10 s, threshold 1.</li>
           <li><strong>TGW Appliance Mode:</strong> Stateful flow symmetry across Multi-AZ attachments.</li>
-          <li><strong>Single Panorama:</strong> Centralized governance over encrypted private TGW Peering.</li>
-          <li><strong>Zero-Bastion:</strong> Direct port forwarding via AWS SSM Session Manager.</li>
+          <li><strong>Two management paths:</strong> A = Panorama EC2, B = Strata Cloud Manager (one folder for both regions).</li>
+          <li><strong>Zero-Bastion:</strong> SSM Session Manager; Guacamole browser-RDP (TOTP) to the DC through the firewalls.</li>
+          <li><strong>Path B lab extras:</strong> admin/test panel, AWS WAF, CloudFront test website, Advanced IP Defense, Frontier Virtual Patching, AD CS PKI.</li>
         </ul>
       </div>
     `,
@@ -141,6 +159,59 @@ class AppController {
 
     // Default select
     this.selectComponent("fw-pair-a");
+  }
+
+  /**
+   * Switch the management path drawn on the diagram: "A" (Panorama EC2) or
+   * "B" (Strata Cloud Manager). A manual switch stops any running flow or
+   * scenario; flows/scenarios/slides that need a path call it with
+   * { silent: true } just before they start.
+   */
+  setMgmtPath(path, opts = {}) {
+    const p = String(path || "").toUpperCase() === "A" ? "A" : "B";
+    const changed = p !== this.diagram.mgmtPath;
+    if (changed && !opts.silent) {
+      this.animator.stop();
+      this.simulator.currentScenario = null;
+      document.querySelectorAll(".flow-card.active, .scenario-card.active").forEach(c => c.classList.remove("active"));
+      const fh = document.getElementById("flow-narration-placeholder");
+      const sh = document.getElementById("scenario-narration-placeholder");
+      if (fh) fh.innerHTML = "";
+      if (sh) sh.innerHTML = "";
+    }
+    if (changed) this.diagram.setMgmtPath(p);
+    this.updateMgmtPathUI();
+    if (changed && !opts.silent) {
+      // Show the component that just appeared, so the switch is obvious.
+      this.selectComponent(p === "A" ? "panorama" : "scm");
+    }
+  }
+
+  updateMgmtPathUI() {
+    const p = this.diagram.mgmtPath;
+    const badge = document.getElementById("badge-ver");
+    if (badge) badge.textContent = this.t(p === "A" ? "badge_ver_a" : "badge_ver_b");
+    const holder = document.getElementById("mgmt-path-switch");
+    if (holder) {
+      holder.innerHTML = `
+        <div class="path-switch">
+          <div class="path-switch-label">${this.t("path_label")}</div>
+          <div class="path-switch-btns">
+            <button class="path-btn path-a ${p === "A" ? "active" : ""}" onclick="window.app.setMgmtPath('A')">${this.t("path_btn_a")}</button>
+            <button class="path-btn path-b ${p === "B" ? "active" : ""}" onclick="window.app.setMgmtPath('B')">${this.t("path_btn_b")}</button>
+          </div>
+          <div class="path-switch-desc">${this.t(p === "A" ? "path_desc_a" : "path_desc_b")}</div>
+        </div>
+      `;
+    }
+  }
+
+  // Diagram node ids that have no drawer entry of their own point at one.
+  resolveComponent(componentId) {
+    const comps = this.data.components || {};
+    if (comps[componentId]) return comps[componentId];
+    const alias = (this.data.componentAliases || {})[componentId];
+    return alias ? comps[alias] : null;
   }
 
   t(key) {
@@ -221,6 +292,8 @@ class AppController {
     const btnPresNext = document.querySelector(".presentation-actions button:last-child");
     if (btnPresPrev) btnPresPrev.textContent = this.t("pres_prev");
     if (btnPresNext) btnPresNext.textContent = this.t("pres_next");
+
+    this.updateMgmtPathUI();
   }
 
   setupDOM() {
@@ -295,6 +368,7 @@ class AppController {
         ${this.t("panel_overview_title")}
       `;
       contentEl.innerHTML = this.t("panel_overview_html");
+      this.updateMgmtPathUI();
     } else if (this.currentMode === "flows") {
       titleEl.innerHTML = `
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -367,6 +441,7 @@ class AppController {
         </div>
       </div>
     `;
+    holder.scrollIntoView({ block: "nearest" });
   }
 
   toggleFlowPlay() {
@@ -408,6 +483,8 @@ class AppController {
         </div>
       </div>
     `;
+    // The scenario list is longer than the panel; keep the narration in view.
+    holder.scrollIntoView({ block: "nearest" });
   }
 
   showSlide(index) {
@@ -420,12 +497,35 @@ class AppController {
     const countEl = document.getElementById("pres-slide-counter");
     const contentEl = document.getElementById("pres-slide-content");
 
+    // Slides tied to one management path switch the diagram first.
+    if (slide.mgmtPath) this.setMgmtPath(slide.mgmtPath, { silent: true });
+    if (slide.expandRegionB && this.diagram.regionBCollapsed) {
+      this.diagram.regionBCollapsed = false;
+      this.diagram.render();
+    }
+
     if (titleEl) titleEl.textContent = slide.title;
     if (countEl) countEl.textContent = this.t("pres_counter")(index + 1, slides.length);
     if (contentEl) contentEl.innerHTML = slide.content;
 
     // Focus camera
     this.diagram.focusOn(slide.targetFocus, slide.zoomLevel || 1.3);
+
+    // The slide bar covers the bottom of the canvas; centre the focused node
+    // in the part that is still visible above it.
+    if (slide.targetFocus !== "global") {
+      const bar = document.getElementById("presentation-bar");
+      const svgR = this.diagram.svg.getBoundingClientRect();
+      if (bar && svgR.height) {
+        const barTop = bar.getBoundingClientRect().top;
+        const vb = Math.min(svgR.width / 1860, svgR.height / 1060) || 1;
+        const hidden = Math.max(0, svgR.bottom - barTop);
+        if (hidden > 0 && hidden < svgR.height) {
+          this.diagram.translateY -= (hidden / 2) / vb;
+          this.diagram.updateTransform();
+        }
+      }
+    }
   }
 
   nextSlide() {
@@ -437,7 +537,7 @@ class AppController {
   }
 
   selectComponent(componentId) {
-    const comp = this.data.components[componentId];
+    const comp = this.resolveComponent(componentId);
     if (!comp) return;
 
     this.diagram.highlightNode(componentId);
@@ -506,8 +606,9 @@ class AppController {
       this.diagram.render();
       this.diagram.focusOn("region-b", 1.05);
     } else if (preset === "mgmt") {
-      this.diagram.focusOn("panorama", 1.35);
-      this.selectComponent("panorama");
+      const target = this.diagram.mgmtPath === "A" ? "panorama" : "scm";
+      this.diagram.focusOn(target, 1.35);
+      this.selectComponent(target);
     }
   }
 
@@ -537,6 +638,7 @@ class AppController {
           comp.summary.toLowerCase().includes(q) ||
           JSON.stringify(comp.details).toLowerCase().includes(q)
         ) {
+          if (comp.mgmtPath) this.setMgmtPath(comp.mgmtPath, { silent: true });
           this.diagram.focusOn(id, 1.4);
           this.selectComponent(id);
           break;
@@ -558,4 +660,41 @@ window.addEventListener("DOMContentLoaded", () => {
   const initialLang = urlParams.get("lang") || "en";
 
   window.app = new AppController(initialLang);
+
+  // Deep links (also used for headless screenshots). All keys optional:
+  //   #path=a|b  mode=overview|flows|scenarios|presentation  slide=N (1-based)
+  //   flow=<id>  scenario=<id>  step=N (1-based)  view=<LEVEL preset>
+  //   node=<component id>  expand=sec,regb  drawer=0  panel=0
+  // ?path=a works too.
+  const applyDeepLink = () => {
+    const h = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const app = window.app;
+    const path = h.get("path") || urlParams.get("path");
+    if (path) app.setMgmtPath(path, { silent: true });
+    // Close overlays first: they resize the canvas, and camera maths below
+    // depends on the final canvas size.
+    if (h.get("drawer") === "0") app.closeDrawer();
+    if (h.get("panel") === "0") document.getElementById("left-panel")?.classList.add("collapsed");
+    const mode = h.get("mode");
+    if (mode && mode !== app.currentMode) app.switchMode(mode);
+    const expand = (h.get("expand") || "").split(",");
+    if (expand.includes("sec")) { app.diagram.securityVpcExpanded = true; app.diagram.render(); }
+    if (expand.includes("regb")) { app.diagram.regionBCollapsed = false; app.diagram.render(); }
+    if (h.get("view")) app.setViewPreset(h.get("view"));
+    if (mode === "presentation" && h.get("slide")) app.showSlide(parseInt(h.get("slide"), 10) - 1);
+    if (mode === "flows" && h.get("flow")) {
+      app.selectFlow(h.get("flow"));
+      const n = parseInt(h.get("step") || "1", 10) - 1;
+      for (let i = 0; i < n; i++) app.animator.nextStep();
+    }
+    if (mode === "scenarios" && h.get("scenario")) {
+      app.selectScenario(h.get("scenario"));
+      const n = parseInt(h.get("step") || "1", 10) - 1;
+      for (let i = 0; i < n; i++) app.simulator.nextStep();
+    }
+    if (h.get("node")) { app.diagram.focusOn(h.get("node"), parseFloat(h.get("zoom") || "1.3")); app.selectComponent(h.get("node")); }
+    if (h.get("drawer") === "0") app.closeDrawer();
+  };
+  if (window.location.hash || urlParams.get("path")) applyDeepLink();
+  window.addEventListener("hashchange", applyDeepLink);
 });

@@ -9,9 +9,9 @@ const ARCHITECTURE_DATA = {
     subtitle: "Enterprise Resilient Architecture Presentation",
     repoUrl: "https://github.com/mzalewski87/aws_ha_project",
     author: "Mikołaj Zalewski",
-    version: "v1.2",
-    panosVersion: "11.1.15",
-    panoramaVersion: "11.1.15",
+    version: "v2.0",
+    panosVersion: "12.2.4 (min. ścieżka B) / 11.1.15 (domyślnie ścieżka A)",
+    panoramaVersion: "11.1.15 (tylko ścieżka A)",
     keyConcepts: [
       "Active/Passive VM-Series HA with PAN-OS AWS HA Plugin",
       "Multi-Region Resilience via AWS Global Accelerator Anycast",
@@ -20,6 +20,16 @@ const ARCHITECTURE_DATA = {
       "Central Panorama with Zero-Bastion SSM Session Manager",
       "Resilient Active Directory Multi-Master Forest & LDAP Auth"
     ]
+  },
+
+  // Węzły schematu bez własnego wpisu otwierają ten wskazany.
+  componentAliases: {
+    "fw1-a": "fw-pair-a",
+    "fw2-a": "fw-pair-a",
+    "fw1-b": "fw-pair-b",
+    "untrust-b": "globalprotect-service",
+    "apache-a": "spoke1-app",
+    "dc-a": "spoke2-dc"
   },
 
   // Presentation slides for guided walkthrough
@@ -33,45 +43,78 @@ const ARCHITECTURE_DATA = {
         <h4>Biznesowy cel nadrzędny („North Star”)</h4>
         <p>Zapewnienie bezprzerwowego dostępu VPN (<strong>GlobalProtect Portal + Gateway</strong>) dla pracowników zdalnych oraz inspekcji ruchu korporacyjnego, który <strong>przetrwa awarię pojedynczego firewalla, strefy dostępności (AZ) oraz całego regionu AWS</strong>.</p>
         <div class="callout-box">
-          <strong>Dlaczego to unikalne?</strong> Tradycyjne architektury często tracą dostęp do VPN przy awarii regionu lub wymagają uciążliwego przełączania DNS (narażonego na TTL). W tym projekcie failover między regionami zachodzi w czasie &lt;30s na stabilnych adresach Anycast.
+          <strong>Dlaczego to unikalne?</strong> Bez przełączania DNS (TTL u ISP). Klienci zachowują te same dwa adresy anycast; Global Accelerator wyłącza region po <strong>jednym</strong> nieudanym teście (co 10 s) i przenosi jego klientów do drugiego regionu. W regionie para HA przełącza się w ~1–8 s.
         </div>
       `
     },
     {
+      id: "mgmt_paths",
+      title: "2. Dwie Ścieżki Zarządzania: Panorama (A) lub Strata Cloud Manager (B) — ADR D11",
+      targetFocus: "global",
+      zoomLevel: 1.0,
+      mgmtPath: "B",
+      content: `
+        <p>Jeden kod, wybór przez <code>management_mode</code>. Wszystko poza zarządzaniem (VPC, TGW, para HA, GP, DC/PKI, Guacamole) jest wspólne. Porównaj przełącznikiem <strong>ŚCIEŻKA ZARZĄDZANIA</strong> na schemacie lub w lewym panelu.</p>
+        <table class="slide-table">
+          <tr><th></th><th>Ścieżka A — Panorama</th><th>Ścieżka B — Strata Cloud Manager</th></tr>
+          <tr><td>Menedżer</td><td>Panorama EC2 + 2 TB EBS na logi</td><td>tenant SCM (SaaS), bez EC2</td></tr>
+          <tr><td>Bootstrap</td><td><code>panorama-server=&lt;ip&gt;</code> + vm-auth-key</td><td><code>panorama-server=cloud</code> + PIN rejestracyjny</td></tr>
+          <tr><td>Konfiguracja</td><td>template stack + device group</td><td>jeden folder dla obu regionów; zmienne per-urządzenie</td></tr>
+          <tr><td>HA / routing</td><td><code>configure-ha.sh</code> (SSH) · klasyczny VR</td><td>z SCM (<code>scm-ha.sh</code>) · logical router ARE</td></tr>
+          <tr><td>PAN-OS</td><td>przypięty, Panorama ≥ FW (domyślnie 11.1.15)</td><td>min. 12.2.4 (obraz 12.2.3 ➔ upgrade w miejscu)</td></tr>
+        </table>
+      `
+    },
+    {
       id: "ha_choice",
-      title: "2. Model HA: Active/Passive zamiast GWLB (ADR D1)",
-      targetFocus: "region-a-security",
+      title: "3. Model HA: Active/Passive zamiast GWLB (ADR D1)",
+      targetFocus: "fw-pair-a",
       zoomLevel: 1.35,
       content: `
         <h4>Decyzja Architektoniczna ADR D1</h4>
-        <p>W każdym regionie wdrożono <strong>parę Active/Passive VM-Series</strong> z dedykowanymi łączami HA1 (sterowanie/heartbeat) i HA2 (synchronizacja sesji) oraz wtyczką PAN-OS AWS HA Plugin.</p>
+        <p>W każdym regionie wdrożono <strong>parę Active/Passive VM-Series</strong> z dedykowanymi łączami HA1 (sterowanie/heartbeat) i HA2 (synchronizacja sesji); po stronie AWS przełączeniem steruje wtyczka PAN-OS AWS HA.</p>
         <p><strong>Dlaczego NIE AWS Gateway Load Balancer (GWLB)?</strong></p>
         <ul>
-          <li>GWLB to transparentny mechanizm „bump-in-the-wire” wykorzystujący enkapsulację GENEVE i nie posiada publicznych adresów IP.</li>
+          <li>GWLB to transparentny mechanizm „bump-in-the-wire” (GENEVE) bez adresowalnego publicznego IP per firewall.</li>
           <li>GlobalProtect terminujący ruch VPN klientów na publicznym IP wymaga stabilnego, adresowalnego punktu wejścia.</li>
-          <li>Active/Passive z pływającym EIP gwarantuje przezroczyste przełączenie sesji bez przerywania tuneli VPN.</li>
+          <li>Active/Passive z pływającym adresem wtórnym (z EIP) daje jeden stały publiczny punkt wejścia na region.</li>
         </ul>
       `
     },
     {
       id: "eni_quirks",
-      title: "3. Anatomia Interfejsów ENI i Wymogi AWS",
+      title: "4. Anatomia Interfejsów ENI i Wymogi AWS",
       targetFocus: "fw-pair-a",
-      zoomLevel: 1.6,
+      zoomLevel: 1.5,
       content: `
         <h4>Sztywne wymagania platformowe PAN-OS na AWS</h4>
-        <p>Kolejność interfejsów (device_index) w AWS bezwzględnie warunkuje poprawne działanie:</p>
         <ul>
-          <li><code>device_index=0</code> (eth0) ➔ <strong>Management (HA1)</strong>: Sterowanie, ping ICMP i porty TCP 28769/28260.</li>
-          <li><code>device_index=1</code> (eth1) ➔ <strong>HA2 (Data Link)</strong>: Wymóg AWS – port <code>ethernet1/1</code> firewalla MUSI być przypisany do HA2!</li>
-          <li><code>device_index=2</code> (eth2) ➔ <strong>Trust (ethernet1/2)</strong>: Połączenie ze szkieletem Transit Gateway (source/dest check = off).</li>
-          <li><code>device_index=3</code> (eth3) ➔ <strong>Untrust (ethernet1/3)</strong>: Ruch publiczny, pływający adres wtórny <code>10.10.10.100</code> podpięty pod <strong>Loopback.1</strong> w PAN-OS dla GP.</li>
+          <li><code>device_index=0</code> (eth0) ➔ <strong>Management (HA1)</strong>: sterowanie, ping ICMP i porty TCP 28769/28260.</li>
+          <li><code>device_index=1</code> (eth1) ➔ <strong>HA2 (Data Link)</strong>: wymóg AWS – <code>ethernet1/1</code> MUSI być HA2.</li>
+          <li><code>device_index=2</code> (eth2) ➔ <strong>Trust (ethernet1/2)</strong>: Transit Gateway (source/dest check = off), pływający <code>10.10.20.100</code>.</li>
+          <li><code>device_index=3</code> (eth3) ➔ <strong>Untrust (ethernet1/3)</strong>: ruch publiczny, pływający <code>10.10.10.100</code> (z EIP; GP na <strong>loopback.1</strong>).</li>
         </ul>
+        <p>Pływający <code>.100</code> musi być adresem <strong>wtórnym</strong> — moduł podaje uporządkowaną listę IP.</p>
+      `
+    },
+    {
+      id: "ha_failover",
+      title: "5. Failover HA: Co Naprawdę Się Przenosi (pomiary)",
+      targetFocus: "fw-pair-a",
+      zoomLevel: 1.3,
+      content: `
+        <h4>Wtyczka AWS HA, tryb secondary-IP (PAN-OS 12.2.4, plugin 6.2.1)</h4>
+        <ul>
+          <li>Nowy aktywny FW wywołuje <code>AssignPrivateIpAddresses</code>: <strong>untrust .100</strong> (EIP jest z nim skojarzony, więc idzie za nim) i <strong>trust .100</strong> przechodzą na jego ENI.</li>
+          <li><code>ReplaceRoute</code> w <strong>obu tablicach tras TGW-attachment</strong>: <code>0.0.0.0/0</code> ➔ jego trust ENI.</li>
+          <li>Wtyczka przepisuje tylko trasy wskazujące ENI, z których przenosi IP — dlatego trust ENI też ma pływający IP.</li>
+        </ul>
+        <div class="callout-box"><strong>Zmierzone:</strong> przejęcie 0,7–7,7 s; portal GP niedostępny ~5 s na przełączenie; CloudTrail ~6 s po suspend. Preemption wyłączone.</div>
       `
     },
     {
       id: "tgw_appliance",
-      title: "4. Transit Gateway & Appliance Mode (ADR D5)",
+      title: "6. Transit Gateway & Appliance Mode (ADR D5)",
       targetFocus: "tgw-a",
       zoomLevel: 1.45,
       content: `
@@ -80,125 +123,275 @@ const ARCHITECTURE_DATA = {
         <div class="callout-box warning">
           <strong>Kluczowa flaga:</strong> <code>appliance_mode_support = enable</code> na attachmentcie Security VPC.
         </div>
-        <p>Bez Appliance Mode ruch powrotny w architekturze Multi-AZ może powrócić przez inny firewall w innej strefie dostępności, co powoduje natychmiastowe zrzucenie sesji (TCP RST/Drop) przez stanowy firewall. Appliance Mode wymusza pełną symetrię przepływu!</p>
+        <p>Bez Appliance Mode ruch powrotny w architekturze Multi-AZ może wrócić przez firewall w innej strefie, który zrzuci sesję. Appliance Mode wymusza pełną symetrię przepływu.</p>
       `
     },
     {
       id: "mgmt_panorama",
-      title: "5. Zarządzanie: Panorama & Zero-Bastion (ADR D6, D8)",
-      targetFocus: "region-a-mgmt",
-      zoomLevel: 1.4,
+      title: "7. Ścieżka A: Panorama & Zero-Bastion (ADR D6, D8)",
+      targetFocus: "panorama",
+      zoomLevel: 1.35,
+      mgmtPath: "A",
       content: `
         <h4>Pojedyncza Panorama dla Wszystkich Regionów</h4>
-        <p>Jedna instancja Panorama (<code>m5.4xlarge</code>, dysk logów 2 TB) w Regionie A zarządza obiema parami firewalli poprzez prywatny backbone TGW Peering.</p>
+        <p>Jedna instancja Panorama (<code>m5.4xlarge</code>, dysk logów 2 TB) w Regionie A zarządza obiema parami firewalli przez prywatny TGW Peering (template stack + device group, osobny workspace <code>panos</code>).</p>
         <h4>Bezpieczeństwo: Zero Bastion</h4>
-        <p>Brak publicznych portów SSH i HTTPS do zarządzania. Cały dostęp (Terraform <code>panos</code> provider, XML API, konsola Panorama) realizowany jest przez <strong>AWS SSM Session Manager Port Forwarding</strong> za pośrednictwem SSM Jump Hosta.</p>
+        <p>Brak publicznych portów zarządzania. Terraform, XML API i konsola przez <strong>AWS SSM Session Manager Port Forwarding</strong> za pośrednictwem SSM Jump Hosta.</p>
+      `
+    },
+    {
+      id: "mgmt_scm",
+      title: "8. Ścieżka B: Strata Cloud Manager w Praktyce",
+      targetFocus: "scm",
+      zoomLevel: 1.25,
+      mgmtPath: "B",
+      content: `
+        <ul>
+          <li>init-cfg: <code>panorama-server=cloud</code> + PIN rejestracyjny + <code>advance-routing:enable</code>; brak EC2 Panoramy i aktywacji OTP.</li>
+          <li><strong>Jeden folder SCM</strong> (<code>phase2-scm-config/</code>) trzyma <strong>pary obu regionów</strong>; wartości regionu to <strong>zmienne per-urządzenie</strong>.</li>
+          <li><strong>HA konfigurowane z SCM</strong> (<code>scm-ha.sh</code>); routing to <strong>logical router ARE</strong>.</li>
+          <li><strong>PAN-OS min. 12.2.4</strong>: najnowszy obraz Marketplace to 12.2.3, więc <code>scm-upgrade.sh</code> robi upgrade w miejscu przez SCM.</li>
+          <li>Portal/brama GP nie mają obiektu w API SCM: budowane lokalnie na <strong>każdym</strong> FW (<code>scm-gp-local.sh</code>).</li>
+        </ul>
       `
     },
     {
       id: "multi_region_ga",
-      title: "6. Odporność Multi-Region: Global Accelerator (ADR D3)",
+      title: "9. Odporność Multi-Region: Global Accelerator (ADR D3)",
       targetFocus: "global-accelerator",
       zoomLevel: 1.25,
       content: `
-        <h4>Błyskawiczny Failover Całego Regionu</h4>
-        <p><strong>AWS Global Accelerator</strong> udostępnia 2 statyczne adresy Anycast będące punktem wejścia dla Portalu GlobalProtect:</p>
+        <h4>Najbliższy zdrowy region — nie podział, nie priorytet</h4>
         <ul>
-          <li>Anycast kieruje użytkownika do najbliższego geograficznie, sprawnego regionu po szkielecie AWS.</li>
-          <li>Ciągłe health checki TCP 443 monitorują dostępność portali regionalnych.</li>
-          <li>W razie katastrofy Regionu A, Global Accelerator przełącza ruch na Region B w czasie <strong>&lt;30 sekund</strong>, ignorując cache DNS u dostawców ISP!</li>
+          <li>Dwa statyczne adresy anycast przed portalem (TCP 443, UDP 4501, TCP 80 ➔ ALB z przekierowaniem).</li>
+          <li>Obie grupy endpointów mają <strong>traffic dial 100%</strong>: każdy klient trafia do <strong>najbliższego zdrowego</strong> regionu. Klienci w Polsce ➔ eu-central-1 (Region A).</li>
+          <li>Health check TCP 443 co <strong>10 s</strong> (minimum GA), <strong>próg 1</strong>: jeden nieudany test przenosi klientów regionu do drugiego (~10 s detekcji).</li>
         </ul>
+        <div class="callout-box">Przy domyślnym progu 3 awaria regionu dała <strong>73 s</strong> niedostępności portalu w teście panelu — stąd próg 1. Cena: jeden zgubiony test też przenosi ruch.</div>
       `
     },
     {
       id: "gp_native_failover",
-      title: "7. Natywny Wybór Bram GlobalProtect (ADR D4)",
+      title: "10. Natywny Wybór Bram GlobalProtect (ADR D4)",
       targetFocus: "global",
       zoomLevel: 1.1,
       content: `
         <h4>Brak zewnętrznego load balancera przed bramami VPN</h4>
-        <p>Portal GlobalProtect przekazuje agentom listę zewnętrznych bram (Gateway List):</p>
+        <p>Każdy portal (wszystkie cztery FW) podaje tę samą listę bram:</p>
         <ul>
-          <li>Region A Gateway (<code>gw-eu-central.domena.pl</code>) – Priorytet 1</li>
-          <li>Region B Gateway (<code>gw-eu-west.domena.pl</code>) – Priorytet 2</li>
+          <li><code>gw-a.&lt;zone&gt;</code> — EIP Regionu A, pula 10.10.200.0/24</li>
+          <li><code>gw-b.&lt;zone&gt;</code> — EIP Regionu B, pula 10.20.200.0/24</li>
         </ul>
-        <p>Agent GP samoczynnie testuje czasy odpowiedzi SSL (SSL response time) i łączy się z optymalną bramą, a w razie awarii sam wykonuje transparentny failover.</p>
+        <p>Agent GP mierzy czas odpowiedzi SSL, łączy się z najlepszą bramą i sam wykonuje failover (w laboratorium ścieżki B obie mają priorytet 1).</p>
       `
     },
     {
       id: "ad_replication",
-      title: "8. Zreplikowana Tożsamość: Active Directory DS",
-      targetFocus: "spoke2-both",
+      title: "11. Tożsamość: Zreplikowane AD DS + Dwupoziomowe PKI AD CS",
+      targetFocus: "dc-a",
       zoomLevel: 1.2,
       content: `
-        <h4>Niezależne Uwierzytelnianie przy Awarii Regionu</h4>
-        <p>W Spoke 2 Regionu A działa podstawowy Kontroler Domeny (<code>panw.labs</code>, <code>10.13.0.10</code>), a w Regionie B kontroler repliki (<code>10.23.0.10</code>).</p>
         <ul>
-          <li>Natywna replikacja Active Directory Multi-Master po Cross-Region TGW Peering.</li>
-          <li>Firewalle w profilu LDAP mają zdefiniowane oba serwery DC z agresywnym timeoutem (<code>bind_timelimit = 3s</code>).</li>
-          <li>Gdy Region A przestanie działać, zapytanie LDAP na ocalałym firewallu przełącza się na kontroler w Regionie B w 3 sekundy!</li>
+          <li>Podstawowy DC <code>10.13.0.10</code> (<code>panw.labs</code>) w Regionie A, <strong>replika</strong> <code>10.23.0.10</code> w Regionie B; replikacja przez TGW peering (0 błędów w obie strony).</li>
+          <li>Profile LDAP zawierają oba DC; klienci gw-b dostają replikę jako główny DNS.</li>
+          <li><strong>PKI AD CS</strong>: samodzielny root CA (<code>10.13.0.20</code>) + enterprise issuing CA (<code>10.13.0.21</code>), autoenrolment certyfikatów maszyn dla GP pre-logon.</li>
         </ul>
       `
     },
     {
       id: "app_path",
-      title: "9. Ścieżka Aplikacyjna: CloudFront ➔ NLB ➔ Apache",
-      targetFocus: "app-flow-path",
+      title: "12. Strona Testowa: CloudFront + WAF ➔ NLB ➔ Firewall ➔ Apache",
+      targetFocus: "cloudfront",
       zoomLevel: 1.3,
       content: `
-        <h4>Bezpieczny Dostęp do Aplikacji Wewnętrznej</h4>
-        <p>Ruch do aplikacji w Spoke 1 przechodzi wielowarstwową ochronę:</p>
         <ol>
-          <li>Klient odpytuje <strong>CloudFront CDN</strong> (Edge Caching, ochrona DDoS).</li>
-          <li>CloudFront trafia do internet-facing <strong>Network Load Balancer (NLB)</strong>.</li>
-          <li>NLB kieruje ruch na pływający adres IP Untrust (<code>.100:80</code>) aktywnego firewalla.</li>
-          <li>Firewall wykonuje <strong>DNAT</strong> do Apache (<code>10.12.0.10</code>) ORAZ <strong>SNAT</strong> na interfejs Trust (zapewnia powrót symetryczny, zapobiegając ominięciu firewalla).</li>
+          <li><strong>CloudFront</strong> (certyfikat ACM w us-east-1) za <strong>WAF w zakresie CLOUDFRONT</strong>: <code>https://website.&lt;zone&gt;</code>.</li>
+          <li>Origin to <strong>NLB aplikacji</strong>; jego security group wpuszcza <strong>tylko prefiksy origin-facing CloudFront</strong> — nie da się ominąć CloudFront i WAF.</li>
+          <li>NLB celuje w pływający VIP <code>10.10.10.100:80</code> aktywnego firewalla.</li>
+          <li>Firewall robi <strong>DNAT</strong> do Apache (<code>10.12.0.10</code>) i SNAT na swój trust IP.</li>
         </ol>
       `
     },
     {
+      id: "panel_waf",
+      title: "13. Panel Admina/Testów, AWS WAF i Guacamole (laboratorium B)",
+      targetFocus: "admin-panel",
+      zoomLevel: 1.3,
+      mgmtPath: "B",
+      content: `
+        <ul>
+          <li><strong>Panel</strong> (<code>https://panel.&lt;zone&gt;</code>): 2 hosty w 2 AZ w mgmt VPC za własnym ALB, poza ścieżką firewalli. Logowanie AD, topologia obu regionów na żywo z health GA, animowana symulacja polityki (<code>test security-policy-match</code>), testy awarii (HA, twardy, <strong>awaria regionu</strong>) z pomiarem czasów; historia w DynamoDB.</li>
+          <li><strong>AWS WAF</strong> na ALB panelu i na CloudFront: geo allow-list (lab: Polska), limit per IP, reguły zarządzane AWS. GP celowo poza WAF.</li>
+          <li><strong>Guacamole</strong> (obie ścieżki): RDP w przeglądarce przez ALB + obowiązkowe TOTP; RDP do DC przechodzi przez firewalle.</li>
+        </ul>
+      `
+    },
+    {
+      id: "threat",
+      title: "14. Advanced IP Defense i Frontier Virtual Patching (ścieżka B)",
+      targetFocus: "threat-prevention",
+      zoomLevel: 1.4,
+      mgmtPath: "B",
+      content: `
+        <ul>
+          <li><strong>Advanced IP Defense</strong> (<code>ip_defense_mode = off | alert | block</code>): predefiniowane listy IP PANW (<code>panw-aipd-*</code>, Tor, bullet-proof, high-risk) na górze polityki; <code>alert</code> = allow + log, <code>block</code> = deny wychodzący i przychodzący.</li>
+          <li><strong>Frontier Virtual Patching</strong>: ustawienie profilu Vulnerability Protection; wymaga Advanced Threat Prevention Plus i <strong>PAN-OS 12.2.4+</strong>. Sygnatur nie da się wywołać na żądanie.</li>
+        </ul>
+      `
+    },
+    {
       id: "summary_takeaways",
-      title: "10. Podsumowanie Wartości dla Klienta",
+      title: "15. Podsumowanie Wartości dla Klienta",
       targetFocus: "global",
       zoomLevel: 1.0,
       content: `
         <h4>Kluczowe Korzyści Biznesowo-Architektoniczne</h4>
         <div class="benefits-grid">
           <div class="benefit-card">
-            <div class="badge">99.999% SLA</div>
-            <h5>Maksymalna Odporność</h5>
-            <p>Odporność na awarie pojedynczego FW, strefy AZ i całego regionu AWS bez konieczności interwencji inżyniera.</p>
+            <div class="badge">~5 s / ~10 s</div>
+            <h5>Zmierzona Odporność</h5>
+            <p>~5 s przerwy portalu na przełączenie HA; martwy region wykryty po jednym teście 10 s, klienci przeniesieni.</p>
           </div>
           <div class="benefit-card">
-            <div class="badge">Zero Bastion</div>
-            <h5>Pancerne Bezpieczeństwo</h5>
-            <p>Brak jakichkolwiek publicznych portów zarządzania. Dostęp przez IAM i SSM Session Manager.</p>
+            <div class="badge">Zero Bastion + WAF</div>
+            <h5>Bezpieczny Dostęp</h5>
+            <p>Brak publicznych portów zarządzania; SSM, Guacamole z TOTP, panel i strona za WAF.</p>
           </div>
           <div class="benefit-card">
-            <div class="badge">IaC Terraform</div>
-            <h5>Pełna Powtarzalność</h5>
-            <p>100% zautomatyzowane wdrożenie infrastruktury i konfiguracji PAN-OS (wspólne szablony Panorama).</p>
+            <div class="badge">A lub B</div>
+            <h5>Jeden Kod, Dwa Menedżery</h5>
+            <p>Panorama lub Strata Cloud Manager — ta sama architektura AWS, w całości w Terraform.</p>
           </div>
         </div>
       `
     }
   ],
 
+
   // Detailed technical components for the Drill-Down panel
   components: {
+    "scm": {
+      id: "scm",
+      name: "Strata Cloud Manager (Ścieżka B)",
+      category: "Zarządzanie w chmurze Palo Alto Networks",
+      icon: "panw-scm",
+      mgmtPath: "B",
+      summary: "Płaszczyzna zarządzania w chmurze zastępująca Panoramę w ścieżce B. Jeden folder SCM trzyma pary HA obu regionów; wartości regionu to zmienne per-urządzenie. Bez EC2 Panoramy i bez OTP.",
+      details: {
+        "Wybór": "management_mode = \"scm\" (ADR D11)",
+        "Bootstrap (init-cfg)": "panorama-server=cloud + PIN rejestracyjny; plugin-op-commands=advance-routing:enable",
+        "Folder": "AWS-HA-Transit — pary Regionu A i B (4 FW)",
+        "Wartości per-urządzenie": "scm_variable z device = (pływający IP, next-hopy, brama)",
+        "Workspace": "phase2-scm-config/ (provider scm); scm-onboard-fw.sh; scm-push.sh",
+        "HA": "Z SCM (/ha-configurations, scm-ha.sh) — provider nie ma zasobu HA",
+        "Routing": "Advanced Routing Engine: scm_logical_router",
+        "PAN-OS": "Min. 12.2.4; obraz 12.2.3 ➔ upgrade w miejscu (scm-upgrade.sh)",
+        "GlobalProtect": "Brak obiektu w API SCM — lokalny XML na KAŻDYM FW (scm-gp-local.sh)",
+        "Logi": "Strata Logging Service"
+      }
+    },
+    "admin-panel": {
+      id: "admin-panel",
+      name: "Panel Admina / Testów (Ścieżka B)",
+      category: "Konsola operacyjna",
+      icon: "panel-dashboard",
+      mgmtPath: "B",
+      summary: "Konsola https://panel.<zone> na własnym ALB (+ WAF), 2 hosty w 2 AZ w mgmt VPC — poza ścieżką firewalli, które monitoruje.",
+      details: {
+        "Hosting": "2 × t3.small w 2 AZ (mgmt VPC 10.11/16), ALB (ACM) + WAF REGIONAL",
+        "Logowanie": "AD (NTLM do DC przez firewalle) + grupy panel-admins / panel-operators",
+        "Topologia": "Oba regiony na żywo: role HA, stan EC2, sync, gdzie EIP i trasy, health endpointów GA",
+        "Symulacja polityki": "test security-policy-match na AKTYWNYM FW, animowany przebieg reguł",
+        "Testy awarii": "Sync · HA failover (~47 s) · twardy (~7,5 min) · awaria regionu (~8,5 min) · Align · Recover",
+        "Zmierzone": "Przejęcie 0,7–7,7 s; portal niedostępny ~5 s na przełączenie",
+        "Historia": "DynamoDB <prefix>-panel-runs; jeden test naraz (lease DynamoDB)",
+        "Terraform": "modules/panel, panel.tf (tylko ścieżka B)"
+      }
+    },
+    "waf": {
+      id: "waf",
+      name: "AWS WAF (dwa web ACL)",
+      category: "AWS Edge / Bezpieczeństwo WWW",
+      icon: "aws-waf",
+      summary: "AWS WAF przed dwoma publicznymi endpointami WWW: stroną testową w CloudFront i (ścieżka B) ALB panelu. GlobalProtect celowo poza WAF.",
+      details: {
+        "Web ACL 1": "Zakres CLOUDFRONT (us-east-1) na dystrybucji strony",
+        "Web ACL 2": "Zakres REGIONAL (Region A) na ALB panelu",
+        "Reguła 1": "geo-allow-only: tylko kraje z waf_allowed_countries (lab: [\"PL\"])",
+        "Reguła 2": "Limit per IP 1000 / 5 min",
+        "Reguła 3": "Grupy zarządzane AWS: reputacja IP, anonimowe IP, known bad inputs, core rule set, SQLi",
+        "Poza WAF": "GlobalProtect (L4 przez GA / EIP bram)",
+        "Terraform": "modules/waf, waf.tf"
+      }
+    },
+    "guacamole": {
+      id: "guacamole",
+      name: "Apache Guacamole — RDP w przeglądarce (obie ścieżki)",
+      category: "Dostęp administracyjny (ADR D12)",
+      icon: "guacamole-rdp",
+      summary: "Host Guacamole w mgmt VPC za publicznym ALB. RDP do DC przechodzi przez TGW i firewalle (inspekcja + logi); żaden port RDP nie jest wystawiony.",
+      details: {
+        "URL": "https://rdp.<zone>/guacamole/",
+        "Uwierzytelnianie": "Hasło admina w Secrets Manager; brak guacadmin; TOTP obowiązkowe",
+        "Ścieżka": "Guacamole ➔ TGW ➔ firewalle (reguła guacamole-rdp-to-dc, trust➔trust ms-rdp) ➔ DC",
+        "Terraform": "modules/guacamole, guacamole.tf"
+      }
+    },
+    "pki": {
+      id: "pki",
+      name: "Dwupoziomowe PKI AD CS",
+      category: "Tożsamość i certyfikaty",
+      icon: "pki-cert",
+      summary: "Samodzielny root CA i enterprise issuing CA w spoke 2, z autoenrolmentem certyfikatów maszyn dla GP pre-logon.",
+      details: {
+        "Root CA": "10.13.0.20 — samodzielny, poza domeną",
+        "Issuing CA": "10.13.0.21 — enterprise CA w domenie",
+        "Autoenrolment": "Certyfikaty maszyn przez GPO (setup-machine-autoenroll.sh)",
+        "Znana luka": "Publikacja CRL roota do AD nie działa (ERROR_DS_REFERRAL)",
+        "Terraform": "modules/pki, scripts/setup-pki.sh"
+      }
+    },
+    "threat-prevention": {
+      id: "threat-prevention",
+      name: "Advanced IP Defense i Frontier Virtual Patching",
+      category: "Threat Prevention Palo Alto Networks",
+      icon: "panw-threat",
+      mgmtPath: "B",
+      summary: "Usługi bezpieczeństwa ścieżki B: predefiniowane listy reputacji IP PANW na górze polityki oraz Frontier Virtual Patching w profilu Vulnerability Protection.",
+      details: {
+        "Advanced IP Defense": "ip_defense_mode = off | alert | block",
+        "Listy": "panw-aipd-*, panw-torexit-ip-list, panw-bulletproof-ip-list, panw-highrisk-ip-list",
+        "alert / block": "allow + log / deny wychodzący + przychodzący",
+        "Frontier Virtual Patching": "Wymaga Advanced Threat Prevention Plus + PAN-OS 12.2.4+",
+        "Testy": "Sygnatur pre-disclosure nie da się wywołać na żądanie"
+      }
+    },
+    "dc-b": {
+      id: "dc-b",
+      name: "Windows DC — Replika (Region B)",
+      category: "Tożsamość i katalog",
+      icon: "aws-directory-service",
+      summary: "Dodatkowy kontroler domeny panw.labs w Regionie B — uwierzytelnianie i DNS działają po utracie Regionu A.",
+      details: {
+        "Prywatny IP": "10.23.0.10",
+        "Replikacja": "AD multi-master przez TGW peering (bezpośrednio, nie przez firewalle); 0 błędów",
+        "Użycie": "LDAP firewalli Regionu B; główny DNS klientów gw-b"
+      }
+    },
     "global-accelerator": {
       id: "global-accelerator",
       name: "AWS Global Accelerator",
       category: "AWS Edge / Routing",
       icon: "aws-global-accelerator",
-      summary: "Usługa Anycast kierująca klientów do najbliższego dostępnego punktu końcowego GP Portal na 2 statycznych adresach Anycast.",
+      summary: "Dwa statyczne adresy anycast przed portalem GP. Każdy klient trafia do NAJBLIŻSZEGO ZDROWEGO regionu; gdy region nie przejdzie health checku, wszyscy jego klienci przechodzą do drugiego.",
       details: {
         "Typ usługi": "AWS Global Accelerator (Global Plane, zarządzenie z us-west-2)",
         "Adresacja": "2 statyczne adresy Anycast IP (niezmienne)",
         "Listenery": "TCP 443 (SSL Portal/VPN) + UDP 4501 (IPSec Portal fallback) + opcjonalnie TCP 80 (Redirect ALB)",
-        "Endpoint Groups": "Region A (Frankfurt EIP) + Region B (Dublin EIP)",
-        "Health Checks": "Protokół TCP, port 443, interwał 10s, próg awarii 3 nieudane próby",
-        "Czas przełączenia (Failover)": "< 30 sekund w razie awarii całego regionu",
+        "Endpoint Groups": "Region A (EIP eu-central-1) + Region B (EIP eu-west-1), OBA z traffic dial 100%",
+        "Semantyka ruchu": "Nie podział 50/50 i bez priorytetu: najbliższy zdrowy region (Polska ➔ Region A)",
+        "Health Checks": "TCP 443, interwał 10 s (minimum GA), próg 1 (health_check_threshold)",
+        "Czas przełączenia (Failover)": "Jeden nieudany test wyłącza region (~10 s detekcji); próg 3 dał zmierzone 73 s przerwy portalu",
         "Moduł Terraform": "modules/global_accelerator",
         "Uzasadnienie ADR": "ADR D3 – eliminacja zależności od buforowania DNS i TTL u operatorów telekomunikacyjnych"
       }
@@ -239,7 +432,7 @@ const ARCHITECTURE_DATA = {
       icon: "aws-transit-gateway",
       summary: "Bliźniaczy hub tranzytowy w regionie zapasowym z dołączeniem do Cross-Region Peering.",
       details: {
-        "Amazon Side ASN": "64513",
+        "Amazon Side ASN": "64512 (domyślna wartość modułu w obu regionach)",
         "Appliance Mode": "ENABLE na Security VPC Attachment",
         "Attachmenty": "Security VPC (10.20/16), Mgmt VPC (10.21/16), Spoke 1 (10.22/16), Spoke 2 (10.23/16)",
         "TGW Peering": "Akceptor peer-ingu ab z Regionu A",
@@ -267,7 +460,9 @@ const ARCHITECTURE_DATA = {
       icon: "panw-vmseries",
       summary: "Para firewalli VM-Series w strefach eu-central-1a i eu-central-1b ze stanową synchronizacją i automatycznym failoverem.",
       details: {
-        "Wersja PAN-OS": "11.1.15 (Marketplace BYOL)",
+        "Wersja PAN-OS": "Ścieżka B: min. 12.2.4 (obraz 12.2.3 ➔ upgrade przez SCM). Ścieżka A: przypięta (domyślnie 11.1.15)",
+        "Co się przenosi": "untrust .100 (z EIP) + trust .100 (AssignPrivateIpAddresses); obie tablice tras TGW-attachment (ReplaceRoute)",
+        "Zmierzone": "Przejęcie 0,7–7,7 s; przerwa portalu GP ~5 s",
         "Typ instancji EC2": "m5.xlarge (4 vCPU, 16 GiB RAM, zgodne z licencją)",
         "Aktywny węzeł podstawowy": "fw1 (device-priority: 100, preemption: NO)",
         "Pasywny węzeł": "fw2 (device-priority: 110)",
@@ -287,7 +482,8 @@ const ARCHITECTURE_DATA = {
       icon: "panw-vmseries",
       summary: "Zapasowa para firewalli w Regionie B, w pełni zarządzana przez Panoramę z Regionu A.",
       details: {
-        "Wersja PAN-OS": "11.1.15",
+        "Wersja PAN-OS": "Ta sama co Region A (ścieżka B: 12.2.4)",
+        "Zarządzanie (ścieżka B)": "Ten sam folder SCM co Region A; zmienne per-urządzenie; HA z SCM",
         "Adresacja": "Security VPC 10.20.0.0/16, Floating IP 10.20.10.100",
         "Zarządzanie": "Zarejestrowana w Panoramie Regionu A przez TGW Peering",
         "Rejestracja": "scripts/register-fw-panorama.sh",
@@ -299,6 +495,7 @@ const ARCHITECTURE_DATA = {
       name: "Panorama Central Management",
       category: "Palo Alto Networks Central Mgmt",
       icon: "panw-panorama",
+      mgmtPath: "A",
       summary: "Pojedyncza instancja Panoramy zarządzająca wszystkimi firewallami w obu regionach AWS.",
       details: {
         "Wersja PAN-OS": "11.1.15 (Zasada: Wersja Panoramy >= wersji zarządzanych FW)",
@@ -483,8 +680,9 @@ const ARCHITECTURE_DATA = {
     },
     {
       id: "flow-mgmt-plane",
-      name: "5. Management Plane (Panorama ➔ TGW Peering ➔ Region B FWs)",
+      name: "5A. Management Plane — Ścieżka A (Panorama ➔ TGW Peering ➔ Region B)",
       color: "#F59E0B",
+      mgmtPath: "A",
       description: "Zarządzanie regułami i logami pomiędzy centralną Panoramą w Regionie A a firewallami w Regionie B.",
       steps: [
         {
@@ -500,7 +698,7 @@ const ARCHITECTURE_DATA = {
         {
           title: "Dostarczenie do Management ENI w Regionie B",
           text: "TGW Regionu B dostarcza konfigurację na interfejs eth0 (mgmt) firewalla w Regionie B.",
-          nodes: ["tgw-b", "mgmt-b", "fw1-b"]
+          nodes: ["tgw-b", "fw1-b"]
         }
       ]
     },
@@ -554,60 +752,80 @@ const ARCHITECTURE_DATA = {
         {
           phase: "Re-mapowanie Zasobów AWS",
           status: "action",
-          message: "1. ec2:AssociateAddress: EIP zostaje przypisany do interfejsu Untrust FW2 (.100).<br/>2. ec2:ReplaceRoute: Domyślna trasa TGW 0.0.0.0/0 zostaje przepisana na Trust ENI FW2.",
+          message: "1. AssignPrivateIpAddresses: untrust .100 i trust .100 przechodzą na ENI FW2 — EIP jest skojarzony z untrust .100, więc idzie za nim.<br/>2. ReplaceRoute: obie tablice tras TGW-attachment kierują 0.0.0.0/0 na trust ENI FW2.<br/>CloudTrail: ~6 s po suspend.",
           affectedNodes: ["untrust-a", "trust-a", "eip-a"]
         },
         {
           phase: "Przywrócenie Ruchu",
           status: "restored",
-          message: "Ruch VPN i aplikacji zostaje w pełni przywrócony przez FW2. Po ponownym uruchomieniu FW1 dołącza jako Passive (preemption=no zapobiega flappingowi!).",
+          message: "Zmierzone: przejęcie 0,7–7,7 s, portal GP niedostępny ~5 s. FW1 wraca jako Passive (preemption wyłączone); 'Align the pair' w panelu przywraca role.",
           affectedNodes: ["fw2-a"]
         }
       ]
     },
     {
       id: "scenario-region-outage",
-      name: "Scenariusz 2: Katastrofalna Awaria Całego Regionu (Multi-Region DR)",
-      tag: "Disaster Recovery",
-      description: "Symulacja całkowitego wyłączenia Regionu A (awaria sieci szkieletowej lub centrum danych we Frankfurcie).",
-      scriptCommand: "AWS_PROFILE=awsha bash scripts/failover-test.sh region a down",
+      name: "Scenariusz 2: Awaria Całego Regionu (Global Accelerator)",
+      tag: "Multi-Region",
+      description: "Region A gaśnie (test 'Region outage' w panelu zatrzymuje oba FW). GA wyłącza go po JEDNYM nieudanym teście co 10 s i przenosi jego klientów do Regionu B.",
+      scriptCommand: "panel ➔ Failover tests ➔ Region outage   (lub: bash scripts/failover-test.sh region a down)",
       steps: [
+        {
+          phase: "Normalnie: najbliższy zdrowy",
+          status: "normal",
+          message: "Obie grupy endpointów mają traffic dial 100%. Każdy klient trafia do najbliższego zdrowego regionu: Polska ➔ Region A (eu-central-1), bliżej Irlandii ➔ Region B. Bez podziału i bez priorytetu.",
+          affectedNodes: ["global-accelerator"],
+          badges: { "global-accelerator": ["NEAREST HEALTHY", "#10B981"] }
+        },
         {
           phase: "Awaria Regionu A",
           status: "failure",
-          message: "Oba firewalle i kontroler domeny w Regionie A stają się niedostępne. Portale i bramy Regionu A gasną.",
-          affectedNodes: ["region-a", "fw1-a", "fw2-a", "dc-a"]
+          message: "Oba firewalle Regionu A stają. Portal i gw-a na EIP Regionu A przestają odpowiadać.",
+          affectedNodes: ["region-a", "fw1-a", "fw2-a"],
+          badges: { "global-accelerator": ["CHECKING…", "#F59E0B"] }
         },
         {
-          phase: "Detekcja Global Accelerator",
+          phase: "Health check GA nie przechodzi",
           status: "action",
-          message: "Health checki Anycast (TCP 443) w ciągu < 30 sekund oznaczają Region A jako unhealthy.",
-          affectedNodes: ["global-accelerator"]
+          message: "GA testuje TCP 443 na EIP każdego regionu co 10 s (minimum GA). Próg 1: pierwszy nieudany test oznacza Region A jako unhealthy — ~10 s detekcji. (Przy domyślnym progu 3 zmierzono 73 s przerwy portalu.)",
+          affectedNodes: ["global-accelerator"],
+          badges: { "global-accelerator": ["A UNHEALTHY", "#EF4444"] }
         },
         {
-          phase: "Przełączenie Ruchu Anycast",
+          phase: "Klienci przechodzą do Regionu B",
           status: "action",
-          message: "AWS Global Accelerator natychmiast przekierowuje 100% zapytań do Portalu na punkt końcowy Regionu B (Dublin) bez zmian w DNS.",
-          affectedNodes: ["global-accelerator", "region-b", "untrust-b"]
+          message: "GA kieruje klientów Regionu A — np. wszystkich z Polski — do Regionu B przez te same dwa adresy anycast. Bez zmian DNS. Cena progu 1: jeden zgubiony test też przenosi ruch.",
+          affectedNodes: ["global-accelerator", "untrust-b"],
+          badges: { "global-accelerator": ["ALL ➔ REGION B", "#00F0FF"] }
         },
         {
-          phase: "Natywny Failover Bramy GP",
+          phase: "Wybór bramy GP",
           status: "action",
-          message: "Agenci GlobalProtect stwierdzają brak łączności z bramą priorytetu 1 (Region A) i automatycznie łączą się z bramą priorytetu 2 (Region B).",
-          affectedNodes: ["gp-client", "fw1-b"]
+          message: "Portal (teraz z Regionu B) podaje gw-a i gw-b; agenci, którzy stracili gw-a, wybierają gw-b według czasu odpowiedzi SSL.",
+          affectedNodes: ["gp-client", "fw1-b"],
+          badges: { "global-accelerator": ["ALL ➔ REGION B", "#00F0FF"] }
         },
         {
-          phase: "LDAP Failover do Replikanta AD",
+          phase: "LDAP / DNS na replice DC",
           status: "restored",
-          message: "Firewall w Regionie B próbuje odpytać pierwszy DC (Region A), po 3 sekundach (bind_timelimit) przełącza zapytanie na lokalny DC (10.23.0.10). Użytkownik zostaje pomyślnie zalogowany!",
-          affectedNodes: ["fw1-b", "dc-b"]
+          message: "Firewalle Regionu B uwierzytelniają przez replikę DC 10.23.0.10 (replikacja AD przez TGW peering); klienci gw-b już używają jej jako głównego DNS.",
+          affectedNodes: ["fw1-b", "dc-b"],
+          badges: { "global-accelerator": ["ALL ➔ REGION B", "#00F0FF"] }
+        },
+        {
+          phase: "Powrót",
+          status: "normal",
+          message: "Gdy Region A znów przejdzie health check, jego bliscy klienci wracają do niego (najbliższy zdrowy). Test w panelu czeka na czystą parę active/passive i przywraca role.",
+          affectedNodes: ["global-accelerator"],
+          badges: { "global-accelerator": ["A HEALTHY AGAIN", "#10B981"] }
         }
       ]
     },
     {
       id: "scenario-panorama-outage",
-      name: "Scenariusz 3: Awaria Panoramy (Dataplane vs Mgmt-Plane)",
-      tag: "Management Isolation",
+      name: "Scenariusz 3A: Awaria Panoramy (Ścieżka A)",
+      tag: "Management Plane · A",
+      mgmtPath: "A",
       description: "Zatrzymanie instancji Panorama w celach serwisowych lub w wyniku awarii.",
       scriptCommand: "aws ec2 stop-instances --instance-ids <panorama_id>",
       steps: [
@@ -627,7 +845,7 @@ const ARCHITECTURE_DATA = {
     },
     {
       id: "scenario-appliance-mode",
-      name: "Scenariusz 4: Rola Transit Gateway Appliance Mode",
+      name: "Scenariusz 5: Rola Transit Gateway Appliance Mode",
       tag: "Network Symmetry",
       description: "Wyjaśnienie dlaczego flaga appliance_mode_support = enable jest krytyczna dla firewalli stanowych.",
       steps: [

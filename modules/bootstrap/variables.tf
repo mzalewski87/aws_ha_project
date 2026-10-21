@@ -19,6 +19,16 @@ variable "fw_hostnames" {
 
 # --- init-cfg / Panorama wiring (parity with Azure bootstrap fields) ---------
 
+variable "management_mode" {
+  description = "\"panorama\" renders Panorama bootstrap keys (panorama-server=<ip>, tplname, dgname, vm-auth-key); \"scm\" renders panorama-server=cloud (Strata Cloud Manager) and omits the Panorama-only keys."
+  type        = string
+  default     = "panorama"
+  validation {
+    condition     = contains(["panorama", "scm"], var.management_mode)
+    error_message = "management_mode must be \"panorama\" or \"scm\"."
+  }
+}
+
 variable "panorama_server" {
   description = "Panorama private IP (init-cfg panorama-server=)."
   type        = string

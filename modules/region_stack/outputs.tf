@@ -51,18 +51,20 @@ output "fw_ha2_private_ips" {
 }
 
 output "panorama_private_ip" {
-  value       = var.create_panorama ? module.panorama[0].panorama_private_ip : var.panorama_private_ip
-  description = "Panorama IP serving this region."
+  value       = !local.panorama_mode ? null : (var.create_panorama ? module.panorama[0].panorama_private_ip : var.panorama_private_ip)
+  description = "Panorama IP serving this region (null in management_mode = scm)."
 }
 
 output "panorama_instance_id" {
-  value       = var.create_panorama ? module.panorama[0].panorama_instance_id : null
-  description = "Panorama instance ID (primary region only)."
+  value       = var.create_panorama && local.panorama_mode ? module.panorama[0].panorama_instance_id : null
+  description = "Panorama instance ID (primary region, panorama mode only)."
 }
 
 output "ssm_jumphost_instance_id" {
-  value       = var.create_panorama ? module.panorama[0].jumphost_instance_id : null
-  description = "SSM jump host instance ID (primary region only)."
+  value = !var.create_panorama ? null : (
+    local.panorama_mode ? module.panorama[0].jumphost_instance_id : module.ssm_jumphost[0].instance_id
+  )
+  description = "SSM jump host instance ID (primary region only; both management modes)."
 }
 
 output "app_cloudfront_domain" {
@@ -124,4 +126,59 @@ output "pki_root_ca_instance_id" {
 output "pki_sub_ca_instance_id" {
   description = "Enterprise issuing CA instance ID (empty when the PKI is disabled)."
   value       = var.create_dc && var.create_pki ? module.pki[0].sub_ca_instance_id : ""
+}
+
+output "guacamole_alb_dns_name" {
+  value       = local.create_guac ? module.guacamole[0].alb_dns_name : null
+  description = "Guacamole ALB DNS name (alias target for the public hostname)."
+}
+
+output "guacamole_alb_zone_id" {
+  value       = local.create_guac ? module.guacamole[0].alb_zone_id : null
+  description = "Guacamole ALB hosted-zone id (Route53 alias)."
+}
+
+output "guacamole_admin_secret_arn" {
+  value       = local.create_guac ? module.guacamole[0].admin_secret_arn : null
+  description = "Secrets Manager ARN holding the Guacamole admin credentials."
+}
+
+output "panel_alb_dns_name" {
+  value       = local.create_panel ? module.panel[0].alb_dns_name : null
+  description = "Admin panel ALB DNS name (alias target for the public hostname)."
+}
+
+output "panel_alb_zone_id" {
+  value       = local.create_panel ? module.panel[0].alb_zone_id : null
+  description = "Admin panel ALB hosted-zone id (Route53 alias)."
+}
+
+output "panel_secret_arn" {
+  value       = local.create_panel ? module.panel[0].secret_arn : null
+  description = "Secrets Manager ARN with the panel's read-only firewall admin password."
+}
+
+output "fw_instance_ids" {
+  value       = module.firewall.instance_ids
+  description = "Firewall EC2 instance ids by fw name (panel failover tests in another region)."
+}
+
+output "fw_untrust_eni_ids" {
+  value       = module.firewall.untrust_eni_ids
+  description = "Firewall untrust ENI ids by fw name (panel topology: who holds the EIP)."
+}
+
+output "fw_trust_eni_ids" {
+  value       = module.firewall.trust_eni_ids
+  description = "Firewall trust ENI ids by fw name (panel topology: where the routes point)."
+}
+
+output "mgmt_panel_route_table_ids" {
+  value       = local.create_panel ? module.vpc_mgmt.route_table_ids_by_role["panel"] : []
+  description = "Panel subnet route tables (per AZ) — need a route to a remote region's firewall mgmt."
+}
+
+output "panel_alb_arn" {
+  value       = local.create_panel ? module.panel[0].alb_arn : null
+  description = "Admin panel ALB ARN (WAF association)."
 }

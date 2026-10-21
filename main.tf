@@ -31,8 +31,16 @@ locals {
 resource "terraform_data" "version_guard" {
   lifecycle {
     precondition {
-      condition     = local._pano_int >= local._fw_int
+      # Only meaningful when Panorama is the manager; Strata Cloud Manager has no
+      # such coupling to the firewall PAN-OS version.
+      condition     = var.management_mode != "panorama" || local._pano_int >= local._fw_int
       error_message = "panorama_version (${var.panorama_version}) must be >= vmseries_version (${var.vmseries_version}). Panorama can manage same-or-older firewalls only, never newer."
+    }
+    precondition {
+      # Path B onboards through the auto-registration PIN alone: without it init-cfg has no
+      # PIN, the firewalls never appear in the SCM tenant, yet plan/apply would succeed.
+      condition     = var.management_mode != "scm" || (var.fw_registration_pin_id != "" && var.fw_registration_pin_value != "")
+      error_message = "management_mode = \"scm\" needs fw_registration_pin_id and fw_registration_pin_value (CSP > Assets > Device Certificates > Generate Registration PIN)."
     }
   }
 }
@@ -58,6 +66,7 @@ module "region_a" {
   spoke1_vpc_cidr   = var.spoke1_vpc_cidr
   spoke2_vpc_cidr   = var.spoke2_vpc_cidr
 
+  management_mode     = var.management_mode
   create_panorama     = true
   panorama_private_ip = var.panorama_private_ip
   # Secondary regions' firewall (security-VPC) CIDRs, so Panorama's own SG here
@@ -86,12 +95,40 @@ module "region_a" {
   ssh_private_key_file    = var.ssh_private_key_file
   ssh_public_key          = var.ssh_public_key
 
-  create_app               = true
-  create_pki               = var.enable_pki
-  app_aliases              = local.web_domain_on ? [local.web_fqdn] : []
-  app_acm_certificate_arn  = local.web_domain_on ? aws_acm_certificate_validation.web[0].certificate_arn : ""
-  create_dc                = true
-  dc_domain_name           = var.dc_domain_name
+  create_app              = true
+  create_pki              = var.enable_pki
+  app_aliases             = local.web_domain_on ? [local.web_fqdn] : []
+  app_acm_certificate_arn = local.web_domain_on ? aws_acm_certificate_validation.web[0].certificate_arn : ""
+  create_dc               = true
+  dc_domain_name          = var.dc_domain_name
+  create_guacamole        = local.guac_on
+  create_panel            = local.panel_on
+  panel_enable_failover   = var.panel_enable_failover
+  panel_alb_ingress_cidrs = var.panel_alb_ingress_cidrs
+  panel_ga_arn            = var.enable_global_accelerator ? module.global_accelerator[0].accelerator_arn : ""
+  app_nlb_cloudfront_only = var.app_nlb_cloudfront_only
+  app_web_acl_id          = local.web_waf_on ? module.website_waf[0].arn : ""
+  # Region B's pair in the panel (topology + failover/region tests). Plain values only, so
+  # no module-level dependency on region_b is created.
+  panel_remote_pairs = var.enable_region_b ? {
+    b = {
+      label             = "Region B"
+      region            = var.region_b
+      eip_allocation_id = module.region_b[0].fw_public_eip_allocation_id
+      public_ip         = module.region_b[0].fw_public_eip
+      units = { for k, ip in module.region_b[0].fw_mgmt_private_ips : "b-${k}" => {
+        ip          = ip
+        id          = module.region_b[0].fw_instance_ids[k]
+        untrust_eni = module.region_b[0].fw_untrust_eni_ids[k]
+        trust_eni   = module.region_b[0].fw_trust_eni_ids[k]
+      } }
+    }
+  } : {}
+  panel_gp_fqdn            = var.enable_custom_domain ? "${var.custom_domain_portal_hostname}.${var.custom_domain_subdomain_zone}" : ""
+  panel_certificate_arn    = local.panel_on ? aws_acm_certificate_validation.panel[0].certificate_arn : ""
+  guac_certificate_arn     = local.guac_on ? aws_acm_certificate_validation.guac[0].certificate_arn : ""
+  guac_rdp_username        = var.guac_rdp_username
+  guac_rdp_password        = var.guac_rdp_password
   dc_safe_mode_password    = var.dc_safe_mode_password
   dc_promote_to_dc         = var.dc_promote_to_dc
   dc_ad_test_user_name     = var.dc_ad_test_user_name
@@ -121,6 +158,7 @@ module "region_b" {
   spoke2_vpc_cidr   = var.spoke2_vpc_cidr_b
 
   # Single Panorama (Region A) manages Region B too — no Panorama here.
+  management_mode     = var.management_mode
   create_panorama     = false
   panorama_private_ip = var.panorama_private_ip # Region A Panorama, reached via peering
   # Region A mgmt VPC CIDR so Region B's fw-mgmt SG lets the shared Panorama
@@ -142,7 +180,10 @@ module "region_b" {
   ssh_public_key   = var.ssh_public_key
 
   create_app = var.region_b_create_app
-  create_dc  = var.region_b_create_dc
+  # Same protection as Region A's app, if Region B runs one (the website ACL is global/CloudFront).
+  app_nlb_cloudfront_only = var.app_nlb_cloudfront_only
+  app_web_acl_id          = local.web_waf_on ? module.website_waf[0].arn : ""
+  create_dc               = var.region_b_create_dc
   # ONE PKI per forest, not one per region. Region B's domain controller is a
   # replica of the SAME forest, so a second hierarchy there would be a separate
   # trust anchor that no client is configured to trust — and the offline root

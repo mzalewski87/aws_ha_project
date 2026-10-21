@@ -68,6 +68,22 @@ variable "spoke2_vpc_cidr" {
 
 # --- Panorama ----------------------------------------------------------------
 
+variable "management_mode" {
+  description = <<-EOT
+    Central management plane (two deployment paths from one codebase):
+      "panorama" - path A: self-hosted Panorama + phase2-panorama-config/ (default, live-verified).
+      "scm"      - path B: Strata Cloud Manager + phase2-scm-config/. No Panorama EC2 is created;
+                   firewalls bootstrap with panorama-server=cloud. Needs the fw_registration_pin_*
+                   and fw_auth_code inputs (device certificate / licensing).
+  EOT
+  type        = string
+  default     = "panorama"
+  validation {
+    condition     = contains(["panorama", "scm"], var.management_mode)
+    error_message = "management_mode must be \"panorama\" or \"scm\"."
+  }
+}
+
 variable "panorama_private_ip" {
   description = "Static private IP for Panorama in the mgmt VPC panorama subnet (AZ a)."
   type        = string
@@ -360,4 +376,86 @@ variable "enable_ssl_decryption" {
   description = "Activate the SSL Forward Proxy rules. The rules and both CA certificates are ALWAYS created (see enable_pki); this only flips them on. Kept false by default on purpose — a client that does not yet trust the root CA gets a certificate error on every HTTPS site, and a freshly built domain member only picks the root up at its first policy refresh. Turn on once `Get-ChildItem Cert:\\LocalMachine\\Root` on a client shows the root, or run `scripts/setup-ssl-decrypt.sh enable`."
   type        = bool
   default     = false
+}
+
+# --- Guacamole RDP gateway (both management paths) --------------------------
+variable "enable_guacamole" {
+  description = "Deploy the Apache Guacamole RDP gateway for browser-based, TOTP-protected access to the domain controller (internet-facing ALB, RDP inspected by the firewalls). Requires enable_custom_domain."
+  type        = bool
+  default     = false
+}
+
+variable "guacamole_hostname" {
+  description = "Left label for the Guacamole record, e.g. \"rdp\" -> rdp.<custom_domain_subdomain_zone>."
+  type        = string
+  default     = "rdp"
+}
+
+variable "guac_rdp_username" {
+  description = "Optional RDP username pre-filled in the Guacamole DC connection. Empty = users type credentials at connect time (preferred)."
+  type        = string
+  default     = ""
+}
+
+variable "guac_rdp_password" {
+  description = "Optional RDP password for the pre-provisioned connection (stored in Secrets Manager only). Empty = prompt at connect."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# --- Admin panel (Advanced IP Defense / FVP test console) --------------------
+variable "enable_panel" {
+  description = "Deploy the admin/test panel (AD login, HA topology, policy simulation; failover tests only with panel_enable_failover) on its own ALB, in 2 AZs. Path B only; requires enable_custom_domain."
+  type        = bool
+  default     = false
+}
+
+variable "panel_hostname" {
+  description = "Left label for the panel record, e.g. \"panel\" -> panel.<custom_domain_subdomain_zone>."
+  type        = string
+  default     = "panel"
+}
+
+variable "panel_enable_failover" {
+  description = "Let panel operators (AD group panel-operators) run failover tests from the panel. Adds an IAM role that can stop/start ONLY the two firewall instances of the pair. Off by default: the panel ALB is internet-facing."
+  type        = bool
+  default     = false
+}
+
+variable "panel_alb_ingress_cidrs" {
+  description = "CIDRs allowed to reach the panel ALB (443/80). The open internet by default (the AD login is the control); narrow it to your own addresses, especially with panel_enable_failover."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+# --- AWS WAF on the public web endpoints (panel ALB, website CloudFront) -------
+variable "enable_waf" {
+  description = "Put AWS WAF (managed rule groups + rate limit + optional geo allow-list) in front of the admin panel ALB and the website CloudFront distribution."
+  type        = bool
+  default     = true
+}
+
+variable "waf_allowed_countries" {
+  description = "ISO 3166-1 alpha-2 country codes allowed through WAF, e.g. [\"PL\"]. Empty (default) = no geo restriction. Careful: a code that does not include YOUR location locks you out of the panel."
+  type        = list(string)
+  default     = []
+}
+
+variable "waf_panel_rate_limit" {
+  description = "Panel: max requests per source IP per 5 minutes (the failover page polls every 2-6 s, ~150 requests / 5 min per open tab)."
+  type        = number
+  default     = 1000
+}
+
+variable "waf_website_rate_limit" {
+  description = "Website: max requests per source IP per 5 minutes."
+  type        = number
+  default     = 2000
+}
+
+variable "app_nlb_cloudfront_only" {
+  description = "Restrict the app NLB to CloudFront's origin-facing ranges, so the website cannot be reached around CloudFront/WAF. Turning it on for an existing deployment replaces the NLB (CloudFront follows automatically)."
+  type        = bool
+  default     = true
 }

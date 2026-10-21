@@ -302,3 +302,15 @@ variable "fw_trust_gateways" {
     fw1b = "10.20.20.1/32", fw2b = "10.20.20.1/32"
   }
 }
+
+variable "guac_rdp_source_cidrs" {
+  description = "Guacamole subnet(s) allowed RDP to the DC via the firewalls, e.g. [\"10.11.20.0/23\"] (the guac /23 in the default mgmt VPC 10.11.0.0/16). Empty (default) = no rule, so an existing path-A deployment without Guacamole is unchanged."
+  type        = list(string)
+  default     = []
+}
+
+variable "dc_private_ip" {
+  description = "DC private IP for the Guacamole RDP rule (default = .10 of the default spoke2 workload subnet)."
+  type        = string
+  default     = "10.13.0.10"
+}

@@ -465,6 +465,24 @@ resource "panos_nat_policy" "rules" {
 ###############################################################################
 # Security policy (device group)
 ###############################################################################
+# Guacamole -> DC RDP. The deny-all below also matches intrazone trust->trust
+# (the TGW hairpins mgmt<->spoke2 through the trust interface), so browser RDP
+# access needs an explicit, narrowly scoped allow: only the Guacamole subnet,
+# only the DC, only ms-rdp. Empty source list = no rule.
+locals {
+  guac_rdp_rules = length(var.guac_rdp_source_cidrs) > 0 && var.dc_private_ip != "" ? [{
+    name                  = "guacamole-rdp-to-dc"
+    source_zones          = ["trust"]
+    destination_zones     = ["trust"]
+    source_addresses      = var.guac_rdp_source_cidrs
+    destination_addresses = ["${var.dc_private_ip}/32"]
+    applications          = ["ms-rdp"]
+    services              = ["application-default"]
+    action                = "allow"
+    log_end               = true
+  }] : []
+}
+
 locals {
   # EKS egress-allow rule referencing the EDLs — placed BEFORE spokes-outbound.
   edl_rules = var.enable_edl ? [
@@ -481,7 +499,7 @@ locals {
     },
   ] : []
 
-  base_rules = [
+  base_rules = concat(local.guac_rdp_rules, [
     {
       name                  = "gp-users-to-internal"
       source_zones          = ["vpn"]
@@ -558,7 +576,7 @@ locals {
       action                = "deny"
       log_end               = true
     },
-  ]
+  ])
 }
 
 ###############################################################################

@@ -149,6 +149,66 @@ const ICONS = {
     </svg>
   `,
 
+  // Strata Cloud Manager (cloud management plane, path B)
+  "panw-scm": `
+    <svg width="32" height="32" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="10" fill="#0F172A" stroke="#F59E0B" stroke-width="2"/>
+      <path d="M15 31C11.7 31 9 28.6 9 25.5C9 22.6 11.4 20.2 14.4 20C15.5 16.5 18.8 14 22.7 14C27 14 30.6 17.1 31.2 21.2C31.6 21.1 32 21 32.5 21C35.5 21 38 23.5 38 26.5C38 29 36 31 33.5 31H15Z" stroke="#F59E0B" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M24 22C24 22 26 24 26 25.6C26 26.7 25.1 27.6 24 27.6C22.9 27.6 22 26.7 22 25.6C22 24 24 22 24 22Z" fill="#FA582D"/>
+      <path d="M19 36H29M24 31V36" stroke="#38BDF8" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  `,
+
+  // AWS WAF
+  "aws-waf": `
+    <svg width="32" height="32" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="10" fill="#1E293B" stroke="#EF4444" stroke-width="2"/>
+      <path d="M24 10L35 15V24C35 31 30.3 36.6 24 38.5C17.7 36.6 13 31 13 24V15L24 10Z" stroke="#EF4444" stroke-width="2"/>
+      <path d="M18 21H30M18 26H30M22 21V26M26 26V31M20 31H28" stroke="#FF9900" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  `,
+
+  // Admin / test panel (dashboard)
+  "panel-dashboard": `
+    <svg width="32" height="32" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="10" fill="#1E293B" stroke="#38BDF8" stroke-width="2"/>
+      <rect x="10" y="12" width="28" height="20" rx="3" stroke="#38BDF8" stroke-width="1.8"/>
+      <path d="M14 27L19 22L23 25L29 18L34 22" stroke="#10B981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M18 37H30M24 32V37" stroke="#38BDF8" stroke-width="1.8" stroke-linecap="round"/>
+    </svg>
+  `,
+
+  // Guacamole browser-RDP
+  "guacamole-rdp": `
+    <svg width="32" height="32" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="10" fill="#1E293B" stroke="#10B981" stroke-width="2"/>
+      <rect x="10" y="13" width="28" height="18" rx="2.5" stroke="#10B981" stroke-width="1.8"/>
+      <path d="M15 18H23M15 22H27M15 26H21" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/>
+      <circle cx="32" cy="34" r="5" fill="#0F172A" stroke="#F59E0B" stroke-width="1.8"/>
+      <path d="M32 31.5V34L33.6 35.2" stroke="#F59E0B" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+  `,
+
+  // PKI / certificate authority
+  "pki-cert": `
+    <svg width="32" height="32" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="10" fill="#1E293B" stroke="#3B82F6" stroke-width="2"/>
+      <rect x="11" y="12" width="26" height="18" rx="2.5" stroke="#60A5FA" stroke-width="1.8"/>
+      <path d="M15 17H27M15 21H24" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/>
+      <circle cx="30" cy="31" r="5" fill="#1E3A8A" stroke="#F59E0B" stroke-width="1.8"/>
+      <path d="M27.5 35.5L26.5 39L30 37.5L33.5 39L32.5 35.5" stroke="#F59E0B" stroke-width="1.5" stroke-linejoin="round"/>
+    </svg>
+  `,
+
+  // Threat prevention (Advanced IP Defense / Frontier Virtual Patching)
+  "panw-threat": `
+    <svg width="32" height="32" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="48" height="48" rx="10" fill="#0F172A" stroke="#FA582D" stroke-width="2"/>
+      <path d="M24 10L35 15V24C35 31 30.3 36.6 24 38.5C17.7 36.6 13 31 13 24V15L24 10Z" fill="#1E293B" stroke="#FA582D" stroke-width="2"/>
+      <path d="M26 16L19 26H24L22 33L29 23H24L26 16Z" fill="#F59E0B"/>
+    </svg>
+  `,
+
   // User Client
   "user-client": `
     <svg width="32" height="32" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">

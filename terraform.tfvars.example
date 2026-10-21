@@ -127,3 +127,32 @@ enable_custom_domain = false
 # custom_domain_cert_mode           = "self_signed"       # or "letsencrypt"
 # custom_domain_letsencrypt_email   = "you@example.com"
 # custom_domain_letsencrypt_staging = true                # false = trusted cert
+
+# ============================================================================
+# Path B — Strata Cloud Manager instead of Panorama (docs/DEPLOYMENT-SCM.md)
+# ============================================================================
+# management_mode  = "scm"        # default "panorama" (path A)
+# vmseries_version = "12.2.3"     # path B: newest Marketplace image SCM lists (11.1.x fails SCM's bootstrap push);
+#                                 # upgrade in place to the mandatory 12.2.4 (scripts/scm-upgrade.sh)
+#   fw_registration_pin_id / _value above are REQUIRED in path B (the plan refuses to run without them).
+#   Activate the deployment profile for your SCM tenant BEFORE the firewalls boot.
+
+# --- Browser RDP to the DC (both paths; needs enable_custom_domain) ---
+# enable_guacamole   = true
+# guacamole_hostname = "rdp"      # -> https://rdp.<zone>/guacamole/
+
+# --- Admin/test panel (path B only; needs enable_custom_domain + the DC) ---
+# enable_panel            = true
+# panel_hostname          = "panel"                    # -> https://panel.<zone>/
+# panel_enable_failover   = false                      # true = panel operators may stop/start the firewalls
+# panel_alb_ingress_cidrs = ["0.0.0.0/0"]              # narrow to your addresses
+
+# --- HTTPS test website + AWS WAF ---
+# web_app_hostname        = "website"   # -> https://website.<zone>/ (CloudFront + ACM in us-east-1)
+# enable_waf              = true        # WAF on the panel ALB and the website's CloudFront (default true)
+# waf_allowed_countries   = ["PL"]      # geo allow-list; [] = no geo rule. MUST include your own country,
+#                                       # or you lock yourself out of the panel
+# waf_panel_rate_limit    = 1000        # requests per 5 min per IP
+# waf_website_rate_limit  = 2000
+# app_nlb_cloudfront_only = true        # NLB SG admits only CloudFront's origin prefix list (default true);
+#                                       # turning it on for an existing deployment REPLACES the app NLB

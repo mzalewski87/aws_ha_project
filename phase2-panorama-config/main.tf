@@ -92,11 +92,13 @@ module "panorama_config" {
   template_stack_name = var.template_stack_name
   device_group_name   = var.device_group_name
 
-  untrust_gateway_ip   = var.untrust_gateway_ip
-  trust_gateway_ip     = var.trust_gateway_ip
-  mgmt_permitted_cidrs = var.mgmt_permitted_cidrs
-  app_dnat_public_ip   = var.app_dnat_public_ip
-  app_private_ip       = var.app_private_ip
+  untrust_gateway_ip    = var.untrust_gateway_ip
+  trust_gateway_ip      = var.trust_gateway_ip
+  mgmt_permitted_cidrs  = var.mgmt_permitted_cidrs
+  app_dnat_public_ip    = var.app_dnat_public_ip
+  guac_rdp_source_cidrs = var.guac_rdp_source_cidrs
+  dc_private_ip         = var.dc_private_ip
+  app_private_ip        = var.app_private_ip
 
   fw_trust_static_ips   = var.fw_trust_static_ips
   fw_untrust_static_ips = var.fw_untrust_static_ips

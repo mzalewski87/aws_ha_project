@@ -45,3 +45,19 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "cloudfront_only" {
+  description = "Give the NLB a security group that admits only CloudFront's origin-facing ranges. Enabling it on an existing NLB replaces the NLB."
+  type        = bool
+  default     = false
+}
+
+variable "cloudfront_origin_ports" {
+  description = "With cloudfront_only: the NLB port CloudFront connects to (the distribution's origin port). Only this listener is created then. One port only: the CloudFront prefix list weighs ~55 rules per port against the 60-rule security-group quota."
+  type        = list(number)
+  default     = [80]
+  validation {
+    condition     = length(var.cloudfront_origin_ports) == 1
+    error_message = "cloudfront_origin_ports must hold exactly one port."
+  }
+}

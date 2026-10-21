@@ -34,6 +34,7 @@ jobs:
         dir:
           - "."
           - "phase2-panorama-config"
+          - "phase2-scm-config"
           - "optional/eks-deploy"
     steps:
       - uses: actions/checkout@v7
@@ -46,3 +47,24 @@ jobs:
       - name: validate
         working-directory: ${{ matrix.dir }}
         run: terraform validate -no-color
+
+  panel:
+    # Path-B admin/test panel: dependency-free unit tests (validation, XML builders, parsers,
+    # failover state machine against a fake cluster) and a syntax check of the browser JS.
+    name: panel tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python3 -I modules/panel/app/test_panel_core.py
+      - run: python3 -I modules/panel/app/test_failover_core.py
+      - run: for f in modules/panel/app/static/*.js viewer/js/*.js; do node --check "$f"; done
+
+  scripts:
+    name: bash syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: for f in scripts/*.sh; do bash -n "$f"; done

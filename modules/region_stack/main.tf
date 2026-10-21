@@ -32,6 +32,19 @@ locals {
   # else the caller-supplied pre-existing name.
   key_name = length(aws_key_pair.this) > 0 ? aws_key_pair.this[0].key_name : var.key_name
 
+  # Path A (Panorama) vs path B (Strata Cloud Manager). Only the Panorama EC2 +
+  # its log disk are mode-specific; the SSM jump host exists in BOTH modes.
+  panorama_mode = var.management_mode == "panorama"
+
+  # Guacamole host subnet (private, NAT egress) in the mgmt VPC. /24s .20/.21 are
+  # contiguous = 10.11.20.0/23 for the default mgmt CIDR (phase2 rule source).
+  create_guac  = var.create_guacamole && var.create_panorama && var.create_dc
+  guac_subnets = local.create_guac ? { guac = { kind = "private", cidrs = [cidrsubnet(local.mg, 8, 20), cidrsubnet(local.mg, 8, 21)] } } : {}
+
+  # Admin panel hosts (one per AZ, private, NAT egress) in the mgmt VPC: /24s .30/.31.
+  create_panel  = var.create_panel && var.create_panorama && var.create_dc
+  panel_subnets = local.create_panel ? { panel = { kind = "private", cidrs = [cidrsubnet(local.mg, 8, 30), cidrsubnet(local.mg, 8, 31)] } } : {}
+
   # /24 subnets derived from each /16 (index = 3rd octet).
   security_subnets = {
     mgmt    = { kind = "private", cidrs = [cidrsubnet(local.sec, 8, 0), cidrsubnet(local.sec, 8, 1)] }
@@ -132,7 +145,7 @@ module "vpc_mgmt" {
   name_prefix = "${var.name_prefix}-mgmt"
   vpc_cidr    = local.mg
   azs         = var.azs
-  subnets     = local.mgmt_subnets
+  subnets     = merge(local.mgmt_subnets, local.guac_subnets, local.panel_subnets)
   create_igw  = true
   create_nat  = true
   tags        = merge(var.tags, { Role = "management" })
@@ -178,6 +191,16 @@ module "transit_gateway" {
   tgw_routes_in_vpc = merge(
     { for k, rt in module.vpc_mgmt.route_table_ids : "mgmt-${k}" => { route_table_id = rt, destination_cidr_block = local.sec }
     if startswith(k, "panorama-") || startswith(k, "ssm-") },
+    # Guacamole -> DC: the spoke TGW RT hairpins mgmt<->spoke2 through the security
+    # attachment, so RDP is firewall-inspected. Route only the DC VPC via TGW; the
+    # default route stays on NAT for image pulls/SSM.
+    { for k, rt in module.vpc_mgmt.route_table_ids : "mgmt-guac-${k}" => { route_table_id = rt, destination_cidr_block = local.s2 }
+    if local.create_guac && startswith(k, "guac-") },
+    # Panel -> firewall mgmt API (security VPC) and -> DC LDAP (spoke2, firewall-inspected).
+    { for k, rt in module.vpc_mgmt.route_table_ids : "mgmt-panel-sec-${k}" => { route_table_id = rt, destination_cidr_block = local.sec }
+    if local.create_panel && startswith(k, "panel-") },
+    { for k, rt in module.vpc_mgmt.route_table_ids : "mgmt-panel-${k}" => { route_table_id = rt, destination_cidr_block = local.s2 }
+    if local.create_panel && startswith(k, "panel-") },
     { for k, rt in module.vpc_security.route_table_ids : "sec-${k}" => { route_table_id = rt, destination_cidr_block = local.mg }
     if startswith(k, "mgmt-") },
     { for k, rt in module.vpc_security.route_table_ids : "sec-spoke2-${k}" => { route_table_id = rt, destination_cidr_block = local.s2 }
@@ -192,6 +215,7 @@ module "bootstrap" {
   source      = "../bootstrap"
   name_prefix = var.name_prefix
 
+  management_mode                       = var.management_mode
   panorama_server                       = var.panorama_private_ip
   panorama_template_stack               = var.panorama_template_stack
   panorama_device_group                 = var.panorama_device_group
@@ -208,7 +232,7 @@ module "bootstrap" {
 
 # --- Panorama (+ SSM jump host) — primary region only -----------------------
 module "panorama" {
-  count       = var.create_panorama ? 1 : 0
+  count       = var.create_panorama && local.panorama_mode ? 1 : 0
   source      = "../panorama"
   name_prefix = var.name_prefix
 
@@ -236,6 +260,89 @@ module "panorama" {
   ssh_private_key_file = var.ssh_private_key_file
 
   tags = var.tags
+}
+
+# --- SSM jump host for path B (no Panorama module to carry it) ---------------
+module "ssm_jumphost" {
+  count       = var.create_panorama && !local.panorama_mode ? 1 : 0
+  source      = "../ssm_jumphost"
+  name_prefix = var.name_prefix
+
+  vpc_id    = module.vpc_mgmt.vpc_id
+  subnet_id = module.vpc_mgmt.subnet_ids_by_role["ssm"][0]
+  key_name  = local.key_name
+
+  tags = var.tags
+}
+
+# --- Guacamole RDP gateway (both management paths) --------------------------
+module "guacamole" {
+  count       = local.create_guac ? 1 : 0
+  source      = "../guacamole"
+  name_prefix = var.name_prefix
+
+  vpc_id          = module.vpc_mgmt.vpc_id
+  alb_subnet_ids  = module.vpc_mgmt.subnet_ids_by_role["public"]
+  host_subnet_id  = module.vpc_mgmt.subnet_ids_by_role["guac"][0]
+  certificate_arn = var.guac_certificate_arn
+  key_name        = local.key_name
+
+  rdp_target_host   = cidrhost(local.spoke2_subnets["workload"].cidrs[0], 10)
+  rdp_target_domain = var.dc_domain_name
+  rdp_username      = var.guac_rdp_username
+  rdp_password      = var.guac_rdp_password
+
+  tags = var.tags
+
+  # No module-level depends_on on module.routing: it defers this module's data sources to
+  # apply time whenever routing has any pending change, which makes user_data "known after
+  # apply" and REPLACES the host (wiping Guacamole's database). Users reach the DC only after
+  # the whole deployment anyway.
+}
+
+# --- Admin panel (read-only; HA state + policy simulation) -------------------
+module "panel" {
+  count       = local.create_panel ? 1 : 0
+  source      = "../panel"
+  name_prefix = var.name_prefix
+
+  vpc_id          = module.vpc_mgmt.vpc_id
+  alb_subnet_ids  = module.vpc_mgmt.subnet_ids_by_role["public"]
+  host_subnet_ids = module.vpc_mgmt.subnet_ids_by_role["panel"]
+  certificate_arn = var.panel_certificate_arn
+  key_name        = local.key_name
+
+  ldap_host   = cidrhost(local.spoke2_subnets["workload"].cidrs[0], 10)
+  domain_name = var.dc_domain_name
+  # Status page: this region's units first, then the other regions'.
+  fw_mgmt_ips = concat(sort(values(module.firewall.mgmt_private_ips)),
+  flatten([for p in values(var.panel_remote_pairs) : sort([for u in values(p.units) : u.ip])]))
+
+  # Failover tests: the panel may stop/start exactly the firewall instances of the pairs below
+  # (this region's + panel_remote_pairs) and run HA suspend/restore on them (XML API).
+  # The topology reaches the hosts through an SSM parameter, not user_data (modules/panel).
+  enable_failover   = var.panel_enable_failover
+  ga_arn            = var.panel_ga_arn
+  alb_ingress_cidrs = var.panel_alb_ingress_cidrs
+  pairs = merge({
+    a = {
+      label             = "Region A"
+      region            = var.region
+      eip_allocation_id = module.firewall.public_eip_allocation_id
+      public_ip         = module.firewall.public_eip
+      units = { for k, ip in module.firewall.mgmt_private_ips : k => {
+        ip          = ip
+        id          = module.firewall.instance_ids[k]
+        untrust_eni = module.firewall.untrust_eni_ids[k]
+        trust_eni   = module.firewall.trust_eni_ids[k]
+      } }
+    }
+  }, var.panel_remote_pairs)
+  gp_portal_fqdn = var.panel_gp_fqdn
+
+  tags = var.tags
+
+  # (no depends_on on module.routing: see the Guacamole module above)
 }
 
 # --- Firewalls (Active/Passive HA) ------------------------------------------
@@ -307,6 +414,7 @@ module "loadbalancer" {
   # target only goes healthy when Apache is actually reachable end-to-end.
   target_ips        = [module.firewall.floating_ip]
   health_check_port = 80
+  cloudfront_only   = var.app_nlb_cloudfront_only
 
   tags = var.tags
 }
@@ -318,6 +426,7 @@ module "cloudfront" {
   origin_domain_name  = module.loadbalancer[0].nlb_dns_name
   aliases             = var.app_aliases
   acm_certificate_arn = var.app_acm_certificate_arn
+  web_acl_id          = var.app_web_acl_id
   tags                = var.tags
 }
 

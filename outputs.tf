@@ -3,6 +3,11 @@
 # var.enable_region_b. Handoffs for the phased workflow + quick references.
 ###############################################################################
 
+output "management_mode" {
+  description = "Active management path: panorama (A) or scm (B)."
+  value       = var.management_mode
+}
+
 # --- Panorama / management (Phase 2a) ---------------------------------------
 output "panorama_private_ip" {
   description = "Panorama private IP (panos provider target via the SSM tunnel)."
@@ -132,4 +137,24 @@ output "pki_root_ca_instance_id" {
 output "pki_sub_ca_instance_id" {
   description = "Enterprise issuing CA instance ID — SSM target for certificate signing."
   value       = module.region_a.pki_sub_ca_instance_id
+}
+
+output "guacamole_url" {
+  description = "Guacamole RDP gateway URL (null unless enable_guacamole)."
+  value       = local.guac_on ? "https://${local.guac_fqdn}/guacamole/" : null
+}
+
+output "guacamole_admin_secret_arn" {
+  description = "Secrets Manager ARN with the Guacamole admin login (aws secretsmanager get-secret-value)."
+  value       = module.region_a.guacamole_admin_secret_arn
+}
+
+output "panel_url" {
+  description = "Admin panel URL (null unless enable_panel)."
+  value       = local.panel_on ? "https://${local.panel_fqdn}/" : null
+}
+
+output "panel_secret_arn" {
+  description = "Secrets Manager ARN with the panel's read-only firewall admin login (used by scripts/panel-setup.sh)."
+  value       = module.region_a.panel_secret_arn
 }

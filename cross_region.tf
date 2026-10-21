@@ -172,3 +172,15 @@ resource "aws_route" "b_fwmgmt_to_a" {
   destination_cidr_block = var.mgmt_vpc_cidr
   transit_gateway_id     = module.region_b[0].transit_gateway_id
 }
+
+# Region A panel subnets -> Region B security VPC (firewall mgmt API for the panel's topology
+# and tests). Return path already exists: b_fwmgmt_to_a + b_to_a cover the whole mgmt VPC CIDR.
+resource "aws_route" "a_panel_to_b" {
+  # Keyed by position, not by id: the ids are unknown until the panel's route tables exist, and
+  # for_each keys must be known at plan time.
+  for_each = var.enable_region_b ? { for i, id in module.region_a.mgmt_panel_route_table_ids : tostring(i) => id } : {}
+
+  route_table_id         = each.value
+  destination_cidr_block = var.security_vpc_cidr_b
+  transit_gateway_id     = module.region_a.transit_gateway_id
+}
