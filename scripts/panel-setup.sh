@@ -13,7 +13,8 @@
 #   AWS_REGION            deploy region
 #   ad:  DC_INSTANCE_ID   (root output dc_instance_id)
 #        PANEL_USERS      space-separated sAMAccountNames to add to the group
-#        optional PANEL_OPERATORS  accounts that may also run failover tests (group panel-operators)
+#        optional PANEL_OPERATORS  accounts that may run failover tests (group panel-operators;
+#                  enough to sign in on its own)
 #        optional PANEL_GROUP (default panel-admins), DOMAIN (default panw.labs)
 #   fw:  JUMP_INSTANCE_ID  (root output ssm_jumphost_instance_id)
 #        PANEL_SECRET_ARN  (root output panel_secret_arn)

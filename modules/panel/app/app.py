@@ -1,15 +1,16 @@
 """Lab admin panel — AD login, firewall pair status, policy simulation, failover tests.
 
 Viewers (AD group PANEL_ADMIN_GROUP) only read:
-  * login against Active Directory (NTLM bind, so the password is never sent in clear) and a
-    required group (PANEL_ADMIN_GROUP);
+  * login against Active Directory (NTLM bind, so the password is never sent in clear) and
+    membership of PANEL_ADMIN_GROUP or PANEL_OPERATOR_GROUP;
   * status of each firewall (HA state, version) through the PAN-OS XML API with a restricted admin (role panel-ro: XML-API operational commands only, no configuration access);
   * `test security-policy-match`: ask the firewall which rule a session WOULD hit. This checks
     Advanced IP Defense / policy without sending a single packet to a real malicious address;
   * a sample from one of PANW's predefined IP lists, so a test can use an address that really is
     on the list.
-Operators (additionally PANEL_OPERATOR_GROUP) may run failover tests: HA suspend/restore and
-EC2 stop/start of the two firewall instances only (that is all the hosts' IAM role allows).
+Operators (PANEL_OPERATOR_GROUP; no need to be in PANEL_ADMIN_GROUP too) see the same and may
+run failover tests: HA suspend/restore and EC2 stop/start of the two firewall instances only
+(that is all the hosts' IAM role allows).
 Runs are stored in DynamoDB so both panel hosts show the same progress and history. Every action
 is written to the audit log (one JSON line per event on stdout).
 """
@@ -161,9 +162,9 @@ def check_csrf():
 
 
 def ad_authenticate(username, password):
-    """None unless a valid AD account in the admin group; then "operator" or "viewer".
+    """None unless a valid AD account in the admin or operator group; then its role.
 
-    "operator" (extra group) may also run the failover tests; "viewer" is read-only.
+    "operator" may also run the failover tests; "viewer" is read-only.
     """
     if not password:  # an empty password would be an unauthenticated bind on some servers
         return None
@@ -177,10 +178,7 @@ def ad_authenticate(username, password):
         if not conn.entries:
             return None
         groups = [str(g).lower() for g in conn.entries[0].memberOf.values]
-
-        if CFG["group_dn"] not in groups:
-            return None
-        return "operator" if CFG["operator_group_dn"] in groups else "viewer"
+        return core.role_for_groups(groups, CFG["group_dn"], CFG["operator_group_dn"])
     except LDAPException:
         return None
     except Exception as exc:  # fail closed: any other bind problem is a failed sign-in, not a 500
