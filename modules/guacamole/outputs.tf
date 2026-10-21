@@ -15,6 +15,6 @@ output "security_group_id" {
   value       = aws_security_group.host.id
 }
 output "admin_secret_arn" {
-  description = "Secrets Manager secret holding the Guacamole admin password."
+  description = "Secrets Manager secret holding the Guacamole admin password (and ldap_bind_password with ldap_enabled)."
   value       = aws_secretsmanager_secret.admin.arn
 }

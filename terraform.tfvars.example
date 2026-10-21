@@ -140,6 +140,8 @@ enable_custom_domain = false
 # --- Browser RDP to the DC (both paths; needs enable_custom_domain) ---
 # enable_guacamole   = true
 # guacamole_hostname = "rdp"      # -> https://rdp.<zone>/guacamole/
+# guac_ldap_enabled  = true       # AD sign-in for members of guac_ldap_group (+ phase2 guac_ldap_source_cidrs,
+# guac_ldap_group    = "guacusers" #   scripts/guacamole-ldap-setup.sh); toggling replaces the Guacamole host
 
 # --- Admin/test panel (path B only; needs enable_custom_domain + the DC) ---
 # enable_panel            = true

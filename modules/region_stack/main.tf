@@ -292,6 +292,10 @@ module "guacamole" {
   rdp_username      = var.guac_rdp_username
   rdp_password      = var.guac_rdp_password
 
+  ldap_enabled = var.guac_ldap_enabled
+  ldap_domain  = var.dc_domain_name
+  ldap_group   = var.guac_ldap_group
+
   tags = var.tags
 
   # No module-level depends_on on module.routing: it defers this module's data sources to

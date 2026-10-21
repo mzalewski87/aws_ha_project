@@ -659,6 +659,47 @@ price is that a single lost health check also moves traffic.
 - On the firewalls, rule `guacamole-rdp-to-dc` (`trust→trust`, `ms-rdp`) is placed ahead of
   `deny-all`.
 
+### Optional: sign-in with AD accounts (`guac_ldap_enabled`)
+
+Members of one AD group (default `guacusers`) can sign in with their domain account. TOTP stays
+mandatory: on first sign-in each user enrols a code. Nobody is added in Guacamole by hand. The
+bootstrap creates a Guacamole user group with the same name as the AD group and gives it the DC
+connection. Guacamole matches AD groups to its own groups by name, so adding someone to the AD
+group is all it takes.
+
+1. Root `terraform.tfvars`: `guac_ldap_enabled = true` (optionally `guac_ldap_group`). This
+   **replaces the Guacamole host** when toggled on an existing deployment. The new host starts
+   with a new database, so the admin and everyone else enrol TOTP again (the admin password stays
+   the same).
+2. `phase2-scm-config` (path B) or `phase2-panorama-config` (path A):
+   `guac_ldap_source_cidrs = ["10.11.20.0/23"]` creates rule `guacamole-ldap-to-dc`
+   (`trust→trust`, `ldap`, Guacamole subnet → DC). Apply, then `scm-push.sh` or commit-all.
+3. Group and bind account on the DC (re-run after every host replacement, because the bind password
+   is regenerated with the host's secret):
+
+   ```bash
+   AWS_REGION=<region> DC_INSTANCE_ID=$(terraform output -raw dc_instance_id) \
+     GUAC_SECRET_ARN=$(terraform output -raw guacamole_admin_secret_arn) \
+     GUAC_USERS="admin" bash scripts/guacamole-ldap-setup.sh
+   ```
+
+   The bind account (`svc-guacamole`) is a plain domain user, used only to look accounts up.
+   Its password is the `ldap_bind_password` that Terraform generated into the Guacamole secret.
+
+Notes:
+- **Who can sign in** is decided by the LDAP search filter (direct or nested membership of
+  `CN=<group>,CN=Users,<base>`). An AD account outside the group gets "invalid credentials".
+  **What a user sees** comes from the Guacamole group of the same name.
+- It uses plain LDAP on 389, like the panel login: the DC has no LDAPS certificate yet. The bind
+  crosses only the TGW and the firewalls.
+- Group membership is read at every sign-in, so removing someone from the AD group takes effect
+  on their next sign-in. Their Guacamole account (only the TOTP key) stays until an admin
+  deletes it.
+- The settings were live-verified on 2026-10-21 on Guacamole 1.6.0: extensions ldap, postgresql
+  and totp loaded, AD user signed in with TOTP and opened RDP to the DC. That test reconfigured the
+  running container by hand. The bootstrap block in `user-data.sh.tpl` applies the same
+  settings, but it first runs on the next host replacement.
+
 ## Optional run C — Advanced IP Defense, Frontier Virtual Patching, admin panel
 
 ### Advanced IP Defense — list-based variant (`ip_defense_mode = off | alert | block`)

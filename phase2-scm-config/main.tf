@@ -385,6 +385,26 @@ resource "scm_security_rule" "panel_ldap" {
   log_end     = true
 }
 
+# Guacamole AD sign-in (root guac_ldap_enabled): the host binds to the DC over LDAP, through the
+# firewalls like its RDP. Separate from panel-ldap-to-dc so each source can be removed on its own.
+resource "scm_security_rule" "guacamole_ldap" {
+  depends_on = [scm_zone.trust, scm_security_rule.panel_ldap]
+
+  count = length(var.guac_ldap_source_cidrs) > 0 && var.dc_private_ip != "" ? 1 : 0
+
+  name        = "guacamole-ldap-to-dc"
+  folder      = local.folder
+  position    = "pre"
+  from        = ["trust"]
+  to          = ["trust"]
+  source      = var.guac_ldap_source_cidrs
+  destination = ["${var.dc_private_ip}/32"]
+  application = ["ldap"]
+  service     = ["application-default"]
+  action      = "allow"
+  log_end     = true
+}
+
 resource "scm_security_rule" "dc_replication" {
   depends_on = [scm_zone.trust, scm_security_rule.panel_ldap]
 

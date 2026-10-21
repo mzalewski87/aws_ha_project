@@ -381,6 +381,7 @@ const ARCHITECTURE_DATA_EN = {
       details: {
         "URL": "https://rdp.<zone>/guacamole/ (ACM certificate via the Route53 custom-domain zone)",
         "Authentication": "Generated admin password in Secrets Manager; default guacadmin removed before first exposure; TOTP mandatory",
+        "AD Sign-in (optional)": "guac_ldap_enabled: members of AD group guacusers sign in with their domain account (LDAP to the DC, rule guacamole-ldap-to-dc); TOTP still mandatory",
         "Fail-closed": "Bootstrap stops the container if TOTP is not enforced or guacadmin still exists",
         "Data Path": "Guacamole host ➔ TGW ➔ firewalls (rule guacamole-rdp-to-dc, trust➔trust ms-rdp, above deny-all) ➔ DC",
         "Hardening": "IMDSv2, encrypted EBS, SSM-only host access, no secrets in user-data; narrow alb_ingress_cidrs",

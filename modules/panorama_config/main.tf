@@ -481,6 +481,18 @@ locals {
     action                = "allow"
     log_end               = true
   }] : []
+  # Guacamole AD sign-in: the host binds to the DC over LDAP (same path as its RDP).
+  guac_ldap_rules = length(var.guac_ldap_source_cidrs) > 0 && var.dc_private_ip != "" ? [{
+    name                  = "guacamole-ldap-to-dc"
+    source_zones          = ["trust"]
+    destination_zones     = ["trust"]
+    source_addresses      = var.guac_ldap_source_cidrs
+    destination_addresses = ["${var.dc_private_ip}/32"]
+    applications          = ["ldap"]
+    services              = ["application-default"]
+    action                = "allow"
+    log_end               = true
+  }] : []
 }
 
 locals {
@@ -499,7 +511,7 @@ locals {
     },
   ] : []
 
-  base_rules = concat(local.guac_rdp_rules, [
+  base_rules = concat(local.guac_rdp_rules, local.guac_ldap_rules, [
     {
       name                  = "gp-users-to-internal"
       source_zones          = ["vpn"]

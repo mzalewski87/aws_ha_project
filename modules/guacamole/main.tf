@@ -38,6 +38,16 @@ resource "random_password" "db" {
   special = false
 }
 
+resource "random_password" "ldap_bind" {
+  count   = var.ldap_enabled ? 1 : 0
+  length  = 24
+  special = false
+}
+
+locals {
+  ldap_base_dn = join(",", [for p in split(".", var.ldap_domain) : "DC=${p}"])
+}
+
 resource "aws_secretsmanager_secret" "admin" {
   name                    = "${var.name_prefix}-guacamole-admin"
   recovery_window_in_days = 0
@@ -46,12 +56,19 @@ resource "aws_secretsmanager_secret" "admin" {
 
 resource "aws_secretsmanager_secret_version" "admin" {
   secret_id = aws_secretsmanager_secret.admin.id
-  secret_string = jsonencode({
+  secret_string = jsonencode(merge({
     username     = var.guacamole_admin_user
     password     = random_password.admin.result
     db_password  = random_password.db.result
     rdp_password = var.rdp_password
-  })
+  }, var.ldap_enabled ? { ldap_bind_password = random_password.ldap_bind[0].result } : {}))
+
+  lifecycle {
+    precondition {
+      condition     = !var.ldap_enabled || (var.ldap_domain != "" && can(regex("^[A-Za-z0-9._-]+$", var.ldap_group)) && can(regex("^[A-Za-z0-9._-]+$", var.ldap_bind_user)))
+      error_message = "ldap_enabled needs ldap_domain, and ldap_group / ldap_bind_user without spaces or special characters."
+    }
+  }
 }
 
 # --- Security groups --------------------------------------------------------
@@ -178,6 +195,10 @@ resource "aws_instance" "guac" {
     rdp_target_host   = var.rdp_target_host
     rdp_target_domain = var.rdp_target_domain
     rdp_username      = var.rdp_username
+    ldap_enabled      = var.ldap_enabled
+    ldap_group        = var.ldap_group
+    ldap_base_dn      = local.ldap_base_dn
+    ldap_bind_dn      = "CN=${var.ldap_bind_user},CN=Users,${local.ldap_base_dn}"
   })
   user_data_replace_on_change = true
 
