@@ -258,8 +258,18 @@ AWS_REGION=<region> JUMP_INSTANCE_ID=$(terraform output -raw ssm_jumphost_instan
 
 ### B9 — Optional: Advanced IP Defense
 
-Set `ip_defense_mode = "alert"` (or `"block"`) in `phase2-scm-config/terraform.tfvars`, then
-apply and push:
+The rules use PANW's predefined IP lists (`panw-aipd-*`), which ship with the **threat content
+package**. A freshly booted firewall has none (`No valid threat content package exists`), and
+a push that contains the rules is rejected by every such unit: `Unknown address
+'panw-aipd-scanning-ip-list'`, seen live on a rebuilt Region B pair. So:
+- keep `ip_defense_mode = "off"` for the first deployment;
+- install content on **each** unit first: `FW_IP=<unit> scm-gp-local.sh admin`, then `content`,
+  then `cleanup`. `content` downloads and installs the latest Apps+Threats and Antivirus and
+  polls every job;
+- this applies to every new or rebuilt unit, for example Region B, before the next push.
+
+Then set `ip_defense_mode = "alert"` (or `"block"`) in `phase2-scm-config/terraform.tfvars`,
+and apply and push:
 
 ```bash
 terraform -chdir=phase2-scm-config apply -parallelism=4

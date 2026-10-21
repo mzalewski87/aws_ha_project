@@ -20,6 +20,10 @@
 #   letsencrypt replace the bootstrap cert with the Let's Encrypt one from the root module
 #               (terraform output custom_domain_cert_pem / _key_pem)
 #   cleanup     delete the `gpapi` superuser again
+#   content     download + install the latest Apps+Threats and Antivirus content (needs `admin`
+#               first). A fresh firewall has NO threat content, and the predefined IP lists that
+#               Advanced IP Defense rules use (panw-aipd-*) come with it: until it is installed an
+#               SCM push with ip_defense_mode != off fails validation (seen live, Region B).
 #
 # Target: FW_IP if set (run once per unit: FW_IP=<unit 1>, then FW_IP=<unit 2>), else the
 # ACTIVE unit of the pair given by MGMT_IPS (or of the whole tenant if MGMT_IPS is empty —
@@ -43,7 +47,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scm-lib.sh
 source "$HERE/scm-lib.sh"
 
-MODE="${1:?usage: $0 <admin|build|letsencrypt|cleanup>}"
+MODE="${1:?usage: $0 <admin|build|letsencrypt|cleanup|content>}"
 : "${JUMP_INSTANCE_ID:?JUMP_INSTANCE_ID required}"
 
 GW_NAME="${GW_NAME:-gp-gateway-eu-central}"
@@ -249,6 +253,36 @@ letsencrypt)
   curl -sk -m 60 "$BASE" --data-urlencode type=config --data-urlencode action=delete \
        --data-urlencode "xpath=$VS/certificate/entry[@name='gp-cert']" --data-urlencode "key=$KEY" >/dev/null || true
   commit_wait ;;
+
+content)
+  api_login
+  job_wait() {  # $1 = op XML that starts a job; $2 = label
+    local r job j st res
+    r="$(curl -sk -m 120 "$BASE" --data-urlencode type=op --data-urlencode "cmd=$1" --data-urlencode "key=$KEY")"
+    job="$(grep -o '<job>[0-9]*' <<<"$r" | cut -c6-)"
+    if [ -z "$job" ]; then
+      grep -qi "already\|no update\|up to date\|is the latest" <<<"$r" && { scm_log "OK    $2: nothing to do"; return 0; }
+      scm_die "$2 did not start: $(tr -d '\n' <<<"$r" | cut -c1-300)"
+    fi
+    for _ in $(seq 1 120); do
+      j="$(curl -sk -m 60 "$BASE" --data-urlencode type=op --data-urlencode "cmd=<show><jobs><id>$job</id></jobs></show>" --data-urlencode "key=$KEY")"
+      st="$(grep -o '<status>[A-Z]*' <<<"$j" | head -1 | cut -c9-)"
+      res="$(grep -o '<result>[A-Za-z][A-Za-z]*' <<<"$j" | head -1 | cut -c9-)"
+      if [ "$st" = "FIN" ]; then
+        [ "$res" = "OK" ] && { scm_log "OK    $2 (job $job)"; return 0; }
+        scm_die "$2 failed (job $job): $(sed -E 's/<[^>]+>/ /g' <<<"$j" | tr -s ' ' | cut -c1-400)"
+      fi
+      sleep 10
+    done
+    scm_die "$2 did not finish in time (job $job)"
+  }
+  # "check" refreshes the list of available versions; it answers directly (no job).
+  curl -sk -m 120 "$BASE" --data-urlencode type=op --data-urlencode "cmd=<request><content><upgrade><check/></upgrade></content></request>" --data-urlencode "key=$KEY" >/dev/null || true
+  job_wait "<request><content><upgrade><download><latest/></download></upgrade></content></request>" "Apps+Threats download"
+  job_wait "<request><content><upgrade><install><version>latest</version></install></upgrade></content></request>" "Apps+Threats install"
+  curl -sk -m 120 "$BASE" --data-urlencode type=op --data-urlencode "cmd=<request><anti-virus><upgrade><check/></upgrade></anti-virus></request>" --data-urlencode "key=$KEY" >/dev/null || true
+  job_wait "<request><anti-virus><upgrade><download><latest/></download></upgrade></anti-virus></request>" "Antivirus download"
+  job_wait "<request><anti-virus><upgrade><install><version>latest</version></install></upgrade></anti-virus></request>" "Antivirus install" ;;
 
 *) scm_die "unknown mode '$MODE'" ;;
 esac
