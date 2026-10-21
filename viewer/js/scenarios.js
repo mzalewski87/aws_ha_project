@@ -140,8 +140,18 @@ class FailureSimulator {
       const outage = ["failure", "action", "restored"].includes(step.status);
       if (outage) {
         if (regA) {
-          regA.style.opacity = "0.35";
           regA.style.stroke = "#EF4444";
+          // A translucent red veil over the whole region reads at any zoom;
+          // it lives in the (pointer-events: none) animation layer.
+          const anim = svg.querySelector("#animation-layer");
+          const x = +regA.getAttribute("x"), y = +regA.getAttribute("y");
+          const w = +regA.getAttribute("width"), h = +regA.getAttribute("height");
+          if (anim) anim.insertAdjacentHTML("beforeend", `
+            <g class="region-down-veil" pointer-events="none">
+              <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="16" fill="rgba(239,68,68,0.10)" stroke="#EF4444" stroke-width="2.5" stroke-dasharray="10 6" />
+              <rect x="${x + w - 196}" y="${y + 14}" width="180" height="26" rx="6" fill="#7F1D1D" stroke="#EF4444" />
+              <text x="${x + w - 106}" y="${y + 32}" fill="#FECACA" font-size="12" font-weight="700" text-anchor="middle">REGION A DOWN</text>
+            </g>`);
         }
         [fw1a, fw2a, untrustA].forEach(n => {
           if (n) {

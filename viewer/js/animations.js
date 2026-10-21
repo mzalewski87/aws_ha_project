@@ -137,6 +137,11 @@ class TrafficFlowAnimator {
       <circle r="4" fill="#FFFFFF" />
     `;
 
+    // Park the particle on its start point, hidden until its delay elapses;
+    // otherwise delayed particles sat visibly at the scene origin (0,0).
+    particleGroup.setAttribute("transform", `translate(${x1}, ${y1})`);
+    if (delayMs > 0) particleGroup.style.opacity = "0";
+
     this.animLayer.appendChild(particleGroup);
     this.activeParticles.push(particleGroup);
 
@@ -151,6 +156,7 @@ class TrafficFlowAnimator {
         return;
       }
 
+      particleGroup.style.opacity = "";
       const elapsed = currentTime - startTime;
       const progress = Math.min((elapsed % duration) / duration, 1);
 

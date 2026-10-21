@@ -441,6 +441,7 @@ class AppController {
         </div>
       </div>
     `;
+    holder.scrollIntoView({ block: "nearest" });
   }
 
   toggleFlowPlay() {
@@ -482,6 +483,8 @@ class AppController {
         </div>
       </div>
     `;
+    // The scenario list is longer than the panel; keep the narration in view.
+    holder.scrollIntoView({ block: "nearest" });
   }
 
   showSlide(index) {
@@ -507,6 +510,22 @@ class AppController {
 
     // Focus camera
     this.diagram.focusOn(slide.targetFocus, slide.zoomLevel || 1.3);
+
+    // The slide bar covers the bottom of the canvas; centre the focused node
+    // in the part that is still visible above it.
+    if (slide.targetFocus !== "global") {
+      const bar = document.getElementById("presentation-bar");
+      const svgR = this.diagram.svg.getBoundingClientRect();
+      if (bar && svgR.height) {
+        const barTop = bar.getBoundingClientRect().top;
+        const vb = Math.min(svgR.width / 1860, svgR.height / 1060) || 1;
+        const hidden = Math.max(0, svgR.bottom - barTop);
+        if (hidden > 0 && hidden < svgR.height) {
+          this.diagram.translateY -= (hidden / 2) / vb;
+          this.diagram.updateTransform();
+        }
+      }
+    }
   }
 
   nextSlide() {
@@ -652,6 +671,10 @@ window.addEventListener("DOMContentLoaded", () => {
     const app = window.app;
     const path = h.get("path") || urlParams.get("path");
     if (path) app.setMgmtPath(path, { silent: true });
+    // Close overlays first: they resize the canvas, and camera maths below
+    // depends on the final canvas size.
+    if (h.get("drawer") === "0") app.closeDrawer();
+    if (h.get("panel") === "0") document.getElementById("left-panel")?.classList.add("collapsed");
     const mode = h.get("mode");
     if (mode && mode !== app.currentMode) app.switchMode(mode);
     const expand = (h.get("expand") || "").split(",");
@@ -671,7 +694,6 @@ window.addEventListener("DOMContentLoaded", () => {
     }
     if (h.get("node")) { app.diagram.focusOn(h.get("node"), parseFloat(h.get("zoom") || "1.3")); app.selectComponent(h.get("node")); }
     if (h.get("drawer") === "0") app.closeDrawer();
-    if (h.get("panel") === "0") document.getElementById("left-panel")?.classList.add("collapsed");
   };
   if (window.location.hash || urlParams.get("path")) applyDeepLink();
   window.addEventListener("hashchange", applyDeepLink);

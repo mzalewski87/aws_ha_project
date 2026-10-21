@@ -60,8 +60,7 @@ const ARCHITECTURE_DATA = {
           <tr><td>Menedżer</td><td>Panorama EC2 + 2 TB EBS na logi</td><td>tenant SCM (SaaS), bez EC2</td></tr>
           <tr><td>Bootstrap</td><td><code>panorama-server=&lt;ip&gt;</code> + vm-auth-key</td><td><code>panorama-server=cloud</code> + PIN rejestracyjny</td></tr>
           <tr><td>Konfiguracja</td><td>template stack + device group</td><td>jeden folder dla obu regionów; zmienne per-urządzenie</td></tr>
-          <tr><td>HA</td><td><code>configure-ha.sh</code> (SSH)</td><td>z SCM (<code>scm-ha.sh</code>, REST)</td></tr>
-          <tr><td>Routing</td><td>klasyczny virtual router</td><td>logical router Advanced Routing Engine</td></tr>
+          <tr><td>HA / routing</td><td><code>configure-ha.sh</code> (SSH) · klasyczny VR</td><td>z SCM (<code>scm-ha.sh</code>) · logical router ARE</td></tr>
           <tr><td>PAN-OS</td><td>przypięty, Panorama ≥ FW (domyślnie 11.1.15)</td><td>min. 12.2.4 (obraz 12.2.3 ➔ upgrade w miejscu)</td></tr>
         </table>
       `
@@ -681,8 +680,9 @@ const ARCHITECTURE_DATA = {
     },
     {
       id: "flow-mgmt-plane",
-      name: "5. Management Plane (Panorama ➔ TGW Peering ➔ Region B FWs)",
+      name: "5A. Management Plane — Ścieżka A (Panorama ➔ TGW Peering ➔ Region B)",
       color: "#F59E0B",
+      mgmtPath: "A",
       description: "Zarządzanie regułami i logami pomiędzy centralną Panoramą w Regionie A a firewallami w Regionie B.",
       steps: [
         {
@@ -698,7 +698,7 @@ const ARCHITECTURE_DATA = {
         {
           title: "Dostarczenie do Management ENI w Regionie B",
           text: "TGW Regionu B dostarcza konfigurację na interfejs eth0 (mgmt) firewalla w Regionie B.",
-          nodes: ["tgw-b", "mgmt-b", "fw1-b"]
+          nodes: ["tgw-b", "fw1-b"]
         }
       ]
     },
@@ -752,60 +752,80 @@ const ARCHITECTURE_DATA = {
         {
           phase: "Re-mapowanie Zasobów AWS",
           status: "action",
-          message: "1. ec2:AssociateAddress: EIP zostaje przypisany do interfejsu Untrust FW2 (.100).<br/>2. ec2:ReplaceRoute: Domyślna trasa TGW 0.0.0.0/0 zostaje przepisana na Trust ENI FW2.",
+          message: "1. AssignPrivateIpAddresses: untrust .100 i trust .100 przechodzą na ENI FW2 — EIP jest skojarzony z untrust .100, więc idzie za nim.<br/>2. ReplaceRoute: obie tablice tras TGW-attachment kierują 0.0.0.0/0 na trust ENI FW2.<br/>CloudTrail: ~6 s po suspend.",
           affectedNodes: ["untrust-a", "trust-a", "eip-a"]
         },
         {
           phase: "Przywrócenie Ruchu",
           status: "restored",
-          message: "Ruch VPN i aplikacji zostaje w pełni przywrócony przez FW2. Po ponownym uruchomieniu FW1 dołącza jako Passive (preemption=no zapobiega flappingowi!).",
+          message: "Zmierzone: przejęcie 0,7–7,7 s, portal GP niedostępny ~5 s. FW1 wraca jako Passive (preemption wyłączone); 'Align the pair' w panelu przywraca role.",
           affectedNodes: ["fw2-a"]
         }
       ]
     },
     {
       id: "scenario-region-outage",
-      name: "Scenariusz 2: Katastrofalna Awaria Całego Regionu (Multi-Region DR)",
-      tag: "Disaster Recovery",
-      description: "Symulacja całkowitego wyłączenia Regionu A (awaria sieci szkieletowej lub centrum danych we Frankfurcie).",
-      scriptCommand: "AWS_PROFILE=awsha bash scripts/failover-test.sh region a down",
+      name: "Scenariusz 2: Awaria Całego Regionu (Global Accelerator)",
+      tag: "Multi-Region",
+      description: "Region A gaśnie (test 'Region outage' w panelu zatrzymuje oba FW). GA wyłącza go po JEDNYM nieudanym teście co 10 s i przenosi jego klientów do Regionu B.",
+      scriptCommand: "panel ➔ Failover tests ➔ Region outage   (lub: bash scripts/failover-test.sh region a down)",
       steps: [
+        {
+          phase: "Normalnie: najbliższy zdrowy",
+          status: "normal",
+          message: "Obie grupy endpointów mają traffic dial 100%. Każdy klient trafia do najbliższego zdrowego regionu: Polska ➔ Region A (eu-central-1), bliżej Irlandii ➔ Region B. Bez podziału i bez priorytetu.",
+          affectedNodes: ["global-accelerator"],
+          badges: { "global-accelerator": ["NEAREST HEALTHY", "#10B981"] }
+        },
         {
           phase: "Awaria Regionu A",
           status: "failure",
-          message: "Oba firewalle i kontroler domeny w Regionie A stają się niedostępne. Portale i bramy Regionu A gasną.",
-          affectedNodes: ["region-a", "fw1-a", "fw2-a", "dc-a"]
+          message: "Oba firewalle Regionu A stają. Portal i gw-a na EIP Regionu A przestają odpowiadać.",
+          affectedNodes: ["region-a", "fw1-a", "fw2-a"],
+          badges: { "global-accelerator": ["CHECKING…", "#F59E0B"] }
         },
         {
-          phase: "Detekcja Global Accelerator",
+          phase: "Health check GA nie przechodzi",
           status: "action",
-          message: "Health checki Anycast (TCP 443) w ciągu < 30 sekund oznaczają Region A jako unhealthy.",
-          affectedNodes: ["global-accelerator"]
+          message: "GA testuje TCP 443 na EIP każdego regionu co 10 s (minimum GA). Próg 1: pierwszy nieudany test oznacza Region A jako unhealthy — ~10 s detekcji. (Przy domyślnym progu 3 zmierzono 73 s przerwy portalu.)",
+          affectedNodes: ["global-accelerator"],
+          badges: { "global-accelerator": ["A UNHEALTHY", "#EF4444"] }
         },
         {
-          phase: "Przełączenie Ruchu Anycast",
+          phase: "Klienci przechodzą do Regionu B",
           status: "action",
-          message: "AWS Global Accelerator natychmiast przekierowuje 100% zapytań do Portalu na punkt końcowy Regionu B (Dublin) bez zmian w DNS.",
-          affectedNodes: ["global-accelerator", "region-b", "untrust-b"]
+          message: "GA kieruje klientów Regionu A — np. wszystkich z Polski — do Regionu B przez te same dwa adresy anycast. Bez zmian DNS. Cena progu 1: jeden zgubiony test też przenosi ruch.",
+          affectedNodes: ["global-accelerator", "untrust-b"],
+          badges: { "global-accelerator": ["ALL ➔ REGION B", "#00F0FF"] }
         },
         {
-          phase: "Natywny Failover Bramy GP",
+          phase: "Wybór bramy GP",
           status: "action",
-          message: "Agenci GlobalProtect stwierdzają brak łączności z bramą priorytetu 1 (Region A) i automatycznie łączą się z bramą priorytetu 2 (Region B).",
-          affectedNodes: ["gp-client", "fw1-b"]
+          message: "Portal (teraz z Regionu B) podaje gw-a i gw-b; agenci, którzy stracili gw-a, wybierają gw-b według czasu odpowiedzi SSL.",
+          affectedNodes: ["gp-client", "fw1-b"],
+          badges: { "global-accelerator": ["ALL ➔ REGION B", "#00F0FF"] }
         },
         {
-          phase: "LDAP Failover do Replikanta AD",
+          phase: "LDAP / DNS na replice DC",
           status: "restored",
-          message: "Firewall w Regionie B próbuje odpytać pierwszy DC (Region A), po 3 sekundach (bind_timelimit) przełącza zapytanie na lokalny DC (10.23.0.10). Użytkownik zostaje pomyślnie zalogowany!",
-          affectedNodes: ["fw1-b", "dc-b"]
+          message: "Firewalle Regionu B uwierzytelniają przez replikę DC 10.23.0.10 (replikacja AD przez TGW peering); klienci gw-b już używają jej jako głównego DNS.",
+          affectedNodes: ["fw1-b", "dc-b"],
+          badges: { "global-accelerator": ["ALL ➔ REGION B", "#00F0FF"] }
+        },
+        {
+          phase: "Powrót",
+          status: "normal",
+          message: "Gdy Region A znów przejdzie health check, jego bliscy klienci wracają do niego (najbliższy zdrowy). Test w panelu czeka na czystą parę active/passive i przywraca role.",
+          affectedNodes: ["global-accelerator"],
+          badges: { "global-accelerator": ["A HEALTHY AGAIN", "#10B981"] }
         }
       ]
     },
     {
       id: "scenario-panorama-outage",
-      name: "Scenariusz 3: Awaria Panoramy (Dataplane vs Mgmt-Plane)",
-      tag: "Management Isolation",
+      name: "Scenariusz 3A: Awaria Panoramy (Ścieżka A)",
+      tag: "Management Plane · A",
+      mgmtPath: "A",
       description: "Zatrzymanie instancji Panorama w celach serwisowych lub w wyniku awarii.",
       scriptCommand: "aws ec2 stop-instances --instance-ids <panorama_id>",
       steps: [
@@ -825,7 +845,7 @@ const ARCHITECTURE_DATA = {
     },
     {
       id: "scenario-appliance-mode",
-      name: "Scenariusz 4: Rola Transit Gateway Appliance Mode",
+      name: "Scenariusz 5: Rola Transit Gateway Appliance Mode",
       tag: "Network Symmetry",
       description: "Wyjaśnienie dlaczego flaga appliance_mode_support = enable jest krytyczna dla firewalli stanowych.",
       steps: [

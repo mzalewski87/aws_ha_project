@@ -129,7 +129,7 @@ class ArchitectureDiagram {
     // View state
     this.scale = 0.88;
     this.translateX = 40;
-    this.translateY = 20;
+    this.translateY = 64;
     this.isPanning = false;
     this.startX = 0;
     this.startY = 0;
@@ -285,7 +285,7 @@ class ArchitectureDiagram {
       id: "gp-client",
       x: 70, y: 36, w: 180, h: 68,
       title: "GlobalProtect Clients",
-      sub: isEn ? "Remote users (SSL / IPSec)" : "Zdalni (SSL / IPSec)",
+      sub: "SSL / IPSec VPN",
       icon: "user-client",
       badge: isEn ? "External" : "Klient VPN",
       badgeClass: "passive-bg"
@@ -306,7 +306,7 @@ class ArchitectureDiagram {
     html += this.createNodeHtml({
       id: "web-user",
       x: 532, y: 36, w: 160, h: 68,
-      title: isEn ? "Internet Users" : "Użytkownicy WWW",
+      title: isEn ? "Internet Users" : "Użytkownicy",
       sub: isEn ? "web · panel · RDP" : "www · panel · RDP",
       icon: "user-client",
       badge: isEn ? "Browser" : "Przeglądarka",
@@ -318,7 +318,7 @@ class ArchitectureDiagram {
       id: "waf",
       x: 708, y: 36, w: 170, h: 68,
       title: "AWS WAF",
-      sub: isEn ? "geo PL · rate · managed" : "geo PL · limit · managed",
+      sub: isEn ? "geo · rate · rules" : "geo · limit · reguły",
       icon: "aws-waf",
       badge: isEn ? "2 web ACLs" : "2 web ACL",
       badgeClass: "active-bg"
@@ -845,10 +845,10 @@ class ArchitectureDiagram {
     html += rowLink("waf", "cloudfront", { stroke: "#FA582D" });
     html += this.createLinkPath("cloudfront", "nlb-a", { stroke: "#FA582D", marker: "arrow-orange" });
 
-    // Path B: WAF (REGIONAL web ACL) also fronts the panel ALB; SCM manages
-    // both regions' pairs from one folder.
+    // Path B: SCM manages both regions' pairs from one folder. (The panel's
+    // REGIONAL WAF is stated on the panel card; a WAF➔panel curve would cut
+    // across the whole security VPC.)
     if (isB) {
-      html += this.createLinkPath("waf", "admin-panel", { stroke: "#F59E0B", dashed: true, strokeWidth: 1.5 });
       html += this.createLinkPath("scm", "fw-pair-a", { stroke: "#F59E0B", dashed: true, marker: "arrow-amber" });
       html += this.createLinkPath("scm", "fw-pair-b", { stroke: "#F59E0B", dashed: true, marker: "arrow-amber" });
     }
@@ -986,6 +986,10 @@ class ArchitectureDiagram {
     const t  = fit(titleText, titleRoom, 11, 7.5, CH_TITLE);
     const ss = subLines.map(l => fit(l, subRoom, 9.5, 7.5, CH_MONO));
     const subSize = ss.length ? Math.min(...ss.map(x => x.size)) : 9.5;
+    // NOTE: sizes are applied with an inline style, not the font-size
+    // attribute. .node-title / .node-subtitle set font-size in CSS, and a CSS
+    // rule beats an SVG presentation attribute — so upstream's computed sizes
+    // were silently ignored and long labels still overflowed their cards.
 
     // Vertical layout. The inner group is translated by (12,10), so a baseline
     // of Y here sits at Y+10 in card space; the card must fit the last baseline
@@ -997,7 +1001,7 @@ class ArchitectureDiagram {
     const lineGap   = tight ? 12 : 15;
 
     const subMarkup = ss.map((x, i) =>
-      `<text class="node-subtitle" font-size="${subSize}" x="42" y="${titleBase + lineGap * (i + 1)}">${x.text}</text>`
+      `<text class="node-subtitle" style="font-size:${subSize}px" x="42" y="${titleBase + lineGap * (i + 1)}">${x.text}</text>`
     ).join("");
 
     const badgeMarkup = !badgeText ? "" : stackBadge
@@ -1013,7 +1017,7 @@ class ArchitectureDiagram {
         <rect class="node-card ${cardClass}" width="${cfg.w}" height="${cfg.h}" />
         <g transform="translate(12, 10)">
           <g class="node-icon">${iconSvg}</g>
-          <text class="node-title" font-size="${t.size}" x="42" y="${titleBase}">${t.text}<title>${titleText}</title></text>
+          <text class="node-title" style="font-size:${t.size}px" x="42" y="${titleBase}">${t.text}<title>${titleText}</title></text>
           ${subMarkup}
           ${cfg.detailsSnippet ? `<text fill="#64748B" font-size="9" font-family="var(--font-mono)" x="42" y="${snippetY}">${cfg.detailsSnippet}</text>` : ''}
         </g>
@@ -1145,9 +1149,11 @@ class ArchitectureDiagram {
   }
 
   resetView() {
+    // translateY leaves room for the floating LEVEL bar, which otherwise
+    // covers the right half of the edge row on wide screens.
     this.scale = 0.88;
     this.translateX = 40;
-    this.translateY = 20;
+    this.translateY = 64;
     this.updateTransform();
     this.clearHighlights();
   }

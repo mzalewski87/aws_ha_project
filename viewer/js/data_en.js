@@ -64,8 +64,7 @@ const ARCHITECTURE_DATA_EN = {
           <tr><td>Manager</td><td>Panorama EC2 + 2 TB log EBS</td><td>SCM tenant (SaaS), no EC2</td></tr>
           <tr><td>Bootstrap</td><td><code>panorama-server=&lt;ip&gt;</code> + vm-auth-key</td><td><code>panorama-server=cloud</code> + registration PIN</td></tr>
           <tr><td>Config</td><td>template stack + device group</td><td>one folder for both regions; per-device variables</td></tr>
-          <tr><td>HA config</td><td><code>configure-ha.sh</code> (SSH)</td><td>from SCM (<code>scm-ha.sh</code>, REST)</td></tr>
-          <tr><td>Routing</td><td>legacy virtual router</td><td>Advanced Routing Engine logical router</td></tr>
+          <tr><td>HA / routing</td><td><code>configure-ha.sh</code> (SSH) · legacy virtual router</td><td>from SCM (<code>scm-ha.sh</code>) · ARE logical router</td></tr>
           <tr><td>PAN-OS</td><td>pinned, Panorama ≥ FW (default 11.1.15)</td><td>12.2.4 minimum (image 12.2.3 ➔ in-place upgrade)</td></tr>
         </table>
       `
@@ -325,7 +324,7 @@ const ARCHITECTURE_DATA_EN = {
         "Web ACL 2": "REGIONAL scope (Region A) on the admin panel ALB (path B)",
         "Rule 1": "geo-allow-only: blocks every country not in waf_allowed_countries (lab: [\"PL\"]; empty = no geo rule)",
         "Rule 2": "Per-IP rate limit 1000 / 5 min (the panel's failover page polls ~150 req / 5 min per tab)",
-        "Rule 3": "AWS managed groups: IP reputation, anonymous IPs (VPN/Tor/hosting), known bad inputs (Log4j…), core rule set, SQLi",
+        "Rule 3": "AWS managed groups: IP reputation, anonymous IPs (HostingProviderIPList only counted: GP full-tunnel users egress via the firewall EIP, an AWS address), known bad inputs (Log4j…), core rule set, SQLi (a SQLi probe gets 403)",
         "Visibility": "CloudWatch metrics + sampled requests per rule",
         "Outside WAF": "GlobalProtect (GA / gw EIPs: L4, clients must reach the firewalls); http://gp.<zone> test page; Guacamole ALB can take the same module",
         "Terraform": "modules/waf, waf.tf (enable_waf, default on)"
