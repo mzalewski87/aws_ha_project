@@ -14,6 +14,7 @@ scm_client_id = "<service-account>@<tsg>.iam.panserviceaccount.com"
 #     Change them together with the root CIDRs, or the rules point at the wrong addresses.
 # guac_rdp_source_cidrs = ["10.11.20.0/23"]   # Guacamole subnets -> DC RDP; [] = no rule
 # panel_source_cidrs    = ["10.11.30.0/23"]   # panel subnets -> DC LDAP (panel login); [] = no rule
+# guac_ldap_source_cidrs = ["10.11.20.0/23"]  # Guacamole -> DC LDAP (AD sign-in, root guac_ldap_enabled); [] = no rule
 # dc_private_ip         = "10.13.0.10"
 # gp_local_ips          = ["10.10.10.100"]    # GP floating IP per region (Region B: add "10.20.10.100")
 # dc_replica_ips        = []                  # e.g. ["10.13.0.10", "10.23.0.10"] with a Region B DC

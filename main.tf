@@ -129,6 +129,8 @@ module "region_a" {
   guac_certificate_arn     = local.guac_on ? aws_acm_certificate_validation.guac[0].certificate_arn : ""
   guac_rdp_username        = var.guac_rdp_username
   guac_rdp_password        = var.guac_rdp_password
+  guac_ldap_enabled        = var.guac_ldap_enabled
+  guac_ldap_group          = var.guac_ldap_group
   dc_safe_mode_password    = var.dc_safe_mode_password
   dc_promote_to_dc         = var.dc_promote_to_dc
   dc_ad_test_user_name     = var.dc_ad_test_user_name

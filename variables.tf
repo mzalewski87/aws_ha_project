@@ -404,6 +404,18 @@ variable "guac_rdp_password" {
   sensitive   = true
 }
 
+variable "guac_ldap_enabled" {
+  description = "Let AD users in guac_ldap_group sign in to Guacamole (LDAP to the DC; TOTP stays mandatory). Needs the firewall rule guacamole-ldap-to-dc (phase2 guac_ldap_source_cidrs) and scripts/guacamole-ldap-setup.sh. Toggling it REPLACES the Guacamole host (new database: TOTP re-enrolment)."
+  type        = bool
+  default     = false
+}
+
+variable "guac_ldap_group" {
+  description = "AD group (in CN=Users) whose members may sign in to Guacamole; a Guacamole group of the same name gets the DC connection."
+  type        = string
+  default     = "guacusers"
+}
+
 # --- Admin panel (Advanced IP Defense / FVP test console) --------------------
 variable "enable_panel" {
   description = "Deploy the admin/test panel (AD login, HA topology, policy simulation; failover tests only with panel_enable_failover) on its own ALB, in 2 AZs. Path B only; requires enable_custom_domain."

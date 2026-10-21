@@ -333,6 +333,7 @@ const ARCHITECTURE_DATA = {
       details: {
         "URL": "https://rdp.<zone>/guacamole/",
         "Uwierzytelnianie": "Hasło admina w Secrets Manager; brak guacadmin; TOTP obowiązkowe",
+        "Konta AD (opcja)": "guac_ldap_enabled: logują się członkowie grupy AD guacusers (LDAP do DC, reguła guacamole-ldap-to-dc); TOTP nadal obowiązkowe",
         "Ścieżka": "Guacamole ➔ TGW ➔ firewalle (reguła guacamole-rdp-to-dc, trust➔trust ms-rdp) ➔ DC",
         "Terraform": "modules/guacamole, guacamole.tf"
       }

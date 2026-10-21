@@ -31,6 +31,7 @@ hand at a specific phase.
 | `scm-upgrade.sh` | Path B — in-place PAN-OS upgrade of a folder through an SCM upgrade rule + schedule; waits until every unit runs the version and every pair is active/passive, always removes its schedule. |
 | `scm-folder-release.sh` | Path B — move devices out of the folder: all of them (teardown, so `phase2-scm-config` can be destroyed) or only the listed disconnected serials (after a firewall rebuild). |
 | `panel-setup.sh` | Path B panel — `ad`: AD groups `panel-admins` / `panel-operators` (+ members) on the DC via SSM; `fw`: restricted firewall admin `panelro` (role `panel-ro`, XML-API op commands only) on each unit. |
+| `guacamole-ldap-setup.sh` | Both paths — Guacamole AD sign-in (`guac_ldap_enabled`): AD group `guacusers` (+ members) and bind account `svc-guacamole` with the generated password from the Guacamole secret, on the DC via SSM. Re-run after the Guacamole host is replaced. |
 | `setup-pki.sh` | Two-tier AD CS PKI (offline root + enterprise issuing CA) over SSM RunCommand; publishes the root to AD and verifies it. |
 | `setup-machine-autoenroll.sh` | Machine-certificate autoenrollment policy in the domain (GP pre-logon prerequisite). |
 | `create-ad-test-user.sh` | Create a test AD user after the DC forest is promoted (invoked by Terraform). |

@@ -261,6 +261,16 @@ variable "guac_rdp_password" {
   default     = ""
   sensitive   = true
 }
+variable "guac_ldap_enabled" {
+  description = "Guacamole sign-in for AD users in guac_ldap_group (LDAP to the DC; TOTP stays mandatory)."
+  type        = bool
+  default     = false
+}
+variable "guac_ldap_group" {
+  description = "AD group whose members may sign in to Guacamole (CN=Users)."
+  type        = string
+  default     = "guacusers"
+}
 
 variable "create_panel" {
   description = "Deploy the admin/test panel (2 hosts in 2 AZs + ALB, mgmt VPC). Primary region only; needs create_dc."

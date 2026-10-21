@@ -350,6 +350,12 @@ variable "guac_rdp_source_cidrs" {
   default     = []
 }
 
+variable "guac_ldap_source_cidrs" {
+  description = "Guacamole host subnet(s) allowed LDAP to the DC (Guacamole AD sign-in). Empty disables the rule."
+  type        = list(string)
+  default     = []
+}
+
 variable "dc_private_ip" {
   description = "Domain controller private IP (destination of the Guacamole RDP allow rule)."
   type        = string

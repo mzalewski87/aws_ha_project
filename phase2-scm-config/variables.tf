@@ -101,6 +101,12 @@ variable "guac_rdp_source_cidrs" {
   default     = ["10.11.20.0/23"]
 }
 
+variable "guac_ldap_source_cidrs" {
+  description = "Guacamole subnet(s) allowed LDAP to the DC, for the AD sign-in (root guac_ldap_enabled). [] disables the rule."
+  type        = list(string)
+  default     = ["10.11.20.0/23"]
+}
+
 variable "dc_replica_ips" {
   description = "Domain controllers that replicate across regions (e.g. [\"10.13.0.10\", \"10.23.0.10\"]). With two or more, a rule allows any traffic between them (AD replication uses RPC on dynamic ports). Only needed if that traffic is routed THROUGH the firewalls: the default cross-region design (cross_region.tf) carries DC<->DC over TGW peering directly. Empty = no rule."
   type        = list(string)

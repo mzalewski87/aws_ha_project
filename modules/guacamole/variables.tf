@@ -59,6 +59,26 @@ variable "rdp_password" {
   default     = ""
   sensitive   = true
 }
+variable "ldap_enabled" {
+  description = "Let AD users sign in (LDAP, plain 389 to rdp_target_host) when they are members of ldap_group. TOTP stays mandatory. Changing it replaces the host (wipes its database)."
+  type        = bool
+  default     = false
+}
+variable "ldap_domain" {
+  description = "AD DNS domain for the LDAP login, e.g. panw.labs (base DN DC=panw,DC=labs)."
+  type        = string
+  default     = ""
+}
+variable "ldap_group" {
+  description = "AD group (CN=<name>,CN=Users,<base>) whose members may sign in. A Guacamole group of the same name gets the DC connection. No spaces."
+  type        = string
+  default     = "guacusers"
+}
+variable "ldap_bind_user" {
+  description = "AD account (CN=Users) Guacamole binds as to look users up. Created by scripts/guacamole-ldap-setup.sh with the generated password from the admin secret."
+  type        = string
+  default     = "svc-guacamole"
+}
 variable "tags" {
   type    = map(string)
   default = {}
