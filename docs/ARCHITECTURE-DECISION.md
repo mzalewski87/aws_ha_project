@@ -119,10 +119,13 @@ that is not management (VPCs, TGW, HA pair, DC/PKI, GP, Guacamole) is shared.
   mode, and SCM's public API has no NGFW GlobalProtect portal/gateway object.
   Those are covered by REST scripts (`scripts/scm-*.sh`, from the pan.dev OpenAPI)
   and, for GP, by device-local XML API as in path A.
-- **Firmware:** the newest PAN-OS present in both the Marketplace and SCM's list.
+- **Firmware:** launch on the newest PAN-OS present in both the Marketplace and SCM's list
+  (12.2.3), then upgrade in place through SCM to the **minimum supported 12.2.4**
+  (`scripts/scm-upgrade.sh`), required by Frontier Virtual Patching. Every unit runs the same
+  release.
 - Prisma Access Agent was rejected: its API is Prisma Access (cloud) only and
   cannot replace GP on our own VM-Series.
-- Path B is **live-verified in one region**; see `docs/DEPLOYMENT-SCM.md`.
+- Path B is **live-verified in two regions** behind Global Accelerator; see `docs/DEPLOYMENT-SCM.md`.
 
 ### D12 — Browser RDP access to the DC via Apache Guacamole (both paths)
 A Docker-based Guacamole host in the mgmt VPC behind an internet-facing ALB (ACM

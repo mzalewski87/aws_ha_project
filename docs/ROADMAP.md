@@ -112,7 +112,9 @@ plane with path A (see ADR D11, `docs/DEPLOYMENT-SCM.md`).
   variant) and an in-place PAN-OS upgrade through SCM — **verified live**.
 - Status: **live-verified in two regions** behind Global Accelerator (Region B pair in the same
   SCM folder via per-device overrides, replica DC, gw-b, two-gateway portal), panel with a
-  region-outage test. Next: run the region-outage test live and record the numbers.
+  region-outage test, WAF on the panel and the HTTPS test website (CloudFront), all units on
+  12.2.4. Next: re-run the region-outage test with GA health-check threshold 1 and record the
+  numbers (the first run, threshold 3, measured a 73 s portal outage).
 
 ## Phase G — Guacamole RDP gateway (both paths)
 

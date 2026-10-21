@@ -17,7 +17,7 @@ One codebase, two management planes, selected with `management_mode`:
 |---|---|---|
 | Manager | self-hosted Panorama EC2 | SCM tenant (no EC2) |
 | Status | live-verified, **multi-region** (Region B + Global Accelerator) | live-verified, **multi-region** (Region B in the same SCM folder + Global Accelerator) |
-| Firewall PAN-OS | pinned, <= Panorama | newest SCM-supported (12.2.x), Advanced Routing Engine |
+| Firewall PAN-OS | pinned, <= Panorama | **12.2.4 minimum** (Marketplace 12.2.3 image upgraded in place through SCM), Advanced Routing Engine |
 | Extra prerequisites | Panorama serial, licence, OTP | SCM tenant, service account, deployment profile **activated for the tenant**, registration PIN |
 | Runbook | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | [docs/DEPLOYMENT-SCM.md](docs/DEPLOYMENT-SCM.md) (fresh account → working, step by step) |
 
@@ -26,7 +26,27 @@ Both paths can add an **Apache Guacamole** browser-RDP gateway to the domain con
 - an **admin/test panel**: AD login, live HA topology, an animated `test security-policy-match`
   simulation, failover tests with measured takeover / portal-outage times;
 - **Advanced IP Defense** (PANW predefined IP lists, `alert` / `block`);
-- in-place PAN-OS upgrades through SCM.
+- in-place PAN-OS upgrades through SCM;
+- **AWS WAF** (geo allow-list, rate limit, managed rules) on the panel and on an HTTPS test
+  website served by CloudFront; the app NLB accepts only CloudFront.
+
+Public endpoints of a path-B deployment (`<zone>` = your delegated subdomain):
+
+| Endpoint | Front door | Protection |
+|---|---|---|
+| `gp.<zone>` (GP portal) | Global Accelerator, nearest healthy region | firewall policy (GP must reach the firewalls directly; no WAF) |
+| `gw-a.<zone>`, `gw-b.<zone>` (GP gateways) | firewall EIP per region | firewall policy |
+| `https://website.<zone>/` | CloudFront → NLB → firewall → Apache | WAF (CLOUDFRONT scope) + firewall |
+| `https://panel.<zone>/` | ALB in the mgmt VPC | WAF (REGIONAL) + AD login |
+| `https://rdp.<zone>/guacamole/` | ALB in the mgmt VPC | TOTP; RDP inspected by the firewalls |
+
+Path B quick start (details and exact commands in [docs/DEPLOYMENT-SCM.md](docs/DEPLOYMENT-SCM.md)):
+1. B0 SCM tenant, service account, deployment profile, PIN; Marketplace subscription.
+2. B1–B3 `terraform.tfvars` with `management_mode = "scm"`, networking + firewalls, DNS delegation.
+3. B4 `phase2-scm-config` apply → `scm-onboard-fw.sh` → apply → `scm-ha.sh` → `scm-push.sh`.
+4. B4b `scm-upgrade.sh AWS-HA-Transit 12.2.4`.
+5. B5–B8 full `terraform apply`, PKI, GlobalProtect on each unit, panel accounts.
+6. B9–B10 optional IP Defense; Region B + Global Accelerator.
 
 Design decisions D11/D12 are in [docs/ARCHITECTURE-DECISION.md](docs/ARCHITECTURE-DECISION.md).
 
@@ -47,7 +67,7 @@ Design decisions D11/D12 are in [docs/ARCHITECTURE-DECISION.md](docs/ARCHITECTUR
 - **Windows AD domain controller** in a spoke, with a **replica DC in Region B**.
 - **CloudFront** in front of the Apache app.
 - **Single Panorama** (path A) managing all firewalls in all regions over cross-region
-  TGW peering — or **Strata Cloud Manager** (path B), one folder for the pair.
+  TGW peering — or **Strata Cloud Manager** (path B), one folder for both regions' pairs.
 - **SSM Session Manager** (via a jump host) for the `panos` provider and XML-API
   automation — no bastion.
 - **Optional add-ons:** HTTP→HTTPS redirect ALB, custom domain (Route53

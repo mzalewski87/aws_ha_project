@@ -1,11 +1,13 @@
 # Deployment Guide — Path B: Strata Cloud Manager
 
-> **STATUS (2026-10-20): LIVE-VERIFIED on a fresh AWS account in TWO regions (eu-central-1 +
+> **STATUS (2026-10-21): LIVE-VERIFIED on a fresh AWS account in TWO regions (eu-central-1 +
 > eu-west-1) behind Global Accelerator, including (for Region A) a full teardown and a second
-> deployment from the repository code alone.**
+> deployment from the repository code alone, and (for Region B) a rebuild of both firewalls.
+> All four units run PAN-OS 12.2.4.**
 >
 > Verified live:
-> - VM-Series on PAN-OS 12.2.3 with the Advanced Routing Engine onboard to SCM. The folder
+> - VM-Series (Marketplace image 12.2.3, upgraded in place to 12.2.4) with the Advanced Routing
+>   Engine onboard to SCM. The folder
 >   configuration (logical router, interfaces, zones, NAT, policy) applies in one pass and is
 >   pushed to and committed on both firewalls.
 > - Active/Passive HA is configured from SCM, and the pair was upgraded in place to 12.2.4
@@ -18,15 +20,18 @@
 > - Guacamole: TOTP is enforced and there is no default account from the first boot.
 > - The two-tier AD CS PKI.
 > - Advanced IP Defense in list mode (`alert` and `block`).
-> - The admin/test panel: AD login, policy simulation, failover tests with timings.
->
+> - The admin/test panel: AD login, policy simulation, failover tests with timings, both regions.
+> - AWS WAF on the panel and the HTTPS test website (`website.<zone>`, CloudFront): geo allow-list,
+>   rate limit, managed rules (a SQLi probe gets 403); the NLB is reachable only from CloudFront.
 > - Region B: second pair onboarded into the SAME SCM folder with per-device region overrides,
 >   HA from SCM, GP gateway `gw-b`, portal listing both gateways on all four units, a replica DC
 >   (AD replication 0 failures both ways), Global Accelerator health-checking both regions'
 >   portals, and the panel showing and testing both regions.
 >
 > **Not covered:**
-> - A live region-outage run (the panel's *Region outage* test exists; run it to measure).
+> - A region-outage run with the current Global Accelerator health-check threshold of 1. The one
+>   live run (threshold 3) measured a 73 s portal outage; re-run the panel's *Region outage* test
+>   to measure the improvement.
 > - GP session behaviour *during* a failover (only the state after it was checked).
 > - SSL decryption (its script uses Panorama).
 > - The root CA's CRL in AD (see [PKI](#pki-notes)).
@@ -99,8 +104,11 @@ Copy `terraform.tfvars.example` to `terraform.tfvars` and set at least:
 
 ```hcl
 management_mode   = "scm"
-vmseries_version  = "12.2.3"   # newest Marketplace image SCM lists; 11.1.x fails SCM's bootstrap push
-key_name          = "<key pair>"            # or ssh_public_key = "ssh-ed25519 ..."
+vmseries_version  = "12.2.3"   # newest Marketplace image SCM lists (11.1.x fails SCM's bootstrap push);
+                               # upgraded to the mandatory 12.2.4 in B4b
+key_name          = "<key pair name>"
+ssh_public_key    = "ssh-ed25519 AAAA..."   # with key_name: Terraform imports the key in EVERY region
+                                            # (key pairs are per region; Region B needs it too)
 
 fw_auth_code              = "<BYOL auth code>"   # secrets: prefer TF_VAR_* from your env file
 fw_registration_pin_id    = "<PIN id>"
@@ -111,17 +119,17 @@ dc_ad_test_user_name     = "admin"
 dc_ad_test_user_password = "<strong password>"   # becomes a Domain Admin; used by the PKI scripts
 dc_safe_mode_password    = "<strong password>"
 
-enable_custom_domain             = true
-custom_domain_subdomain_zone     = "<lab.example.com>"
-custom_domain_cert_mode          = "letsencrypt"
-custom_domain_letsencrypt_email  = "<you@example.com>"
+enable_custom_domain              = true
+custom_domain_subdomain_zone      = "<lab.example.com>"
+custom_domain_cert_mode           = "letsencrypt"
+custom_domain_letsencrypt_email   = "<you@example.com>"
 custom_domain_letsencrypt_staging = true          # flip to false once everything works (5 certs/week limit)
 
-enable_guacamole = true          # https://rdp.<zone>/guacamole/
-enable_panel     = true          # https://panel.<zone>/   (path B only)
-web_app_hostname = "website"     # https://website.<zone>: test site via CloudFront + ACM + WAF
-waf_allowed_countries = ["PL"]   # WAF geo allow-list for panel + website (your own country!)
-# panel_enable_failover   = true                  # lets panel operators stop/start the firewalls
+enable_guacamole      = true     # https://rdp.<zone>/guacamole/
+enable_panel          = true     # https://panel.<zone>/   (path B only)
+panel_enable_failover = true     # panel operators may stop/start the firewalls (failover tests)
+web_app_hostname      = "website"   # https://website.<zone>: test site via CloudFront + ACM + WAF
+waf_allowed_countries = ["PL"]   # WAF geo allow-list for panel + website — must include YOUR country
 # panel_alb_ingress_cidrs = ["<your public IP>/32"]
 ```
 
@@ -139,7 +147,11 @@ terraform apply -target=$M.firewall -target=$M.loadbalancer -target=$M.routing -
 ```
 
 The firewalls boot, license, fetch their device certificate with the PIN and appear in the
-tenant as *Available Devices*, usually 10–20 minutes after launch.
+tenant as *Available Devices*, usually 10–35 minutes after launch.
+
+If a firewall never appears, check its system log for `NOV-021 Insufficient credits`. The BYOL
+credit pool is empty, and every deploy or rebuild consumes activations. Deactivate old serials in
+the Customer Support Portal, then recreate the instances.
 
 ### B3 — DNS delegation and certificate
 
@@ -152,15 +164,17 @@ terraform apply -target=module.custom_domain    # Let's Encrypt wildcard via DNS
 
 ### B4 — SCM folder, onboarding, HA, push
 
+Keep `ip_defense_mode = "off"` in `phase2-scm-config/terraform.tfvars` for now (see B9).
+
 ```bash
-source <your env file>
+source <your env file>                    # SCM_TSG_ID, SCM_CLIENT_ID, SCM_CLIENT_SECRET, TF_VAR_scm_client_secret
 terraform -chdir=phase2-scm-config init
 cp phase2-scm-config/terraform.tfvars.example phase2-scm-config/terraform.tfvars   # tsg id, client id
 terraform -chdir=phase2-scm-config apply -parallelism=4     # 1) folder, defaults, interfaces, router, zones, NAT, policy
 
 # 2) wait for both firewalls, move them into the folder, write fw_devices.auto.tfvars.json.
-#    Keys may be the management IPs (root output fw_mgmt_private_ips) or the serials.
-bash scripts/scm-onboard-fw.sh AWS-HA-Transit \
+#    Keys: the management IPs (root output fw_mgmt_private_ips) or the serials.
+WAIT_MINUTES=45 bash scripts/scm-onboard-fw.sh AWS-HA-Transit \
   10.10.0.11=10.10.20.11/24,10.10.10.11/24 \
   10.10.0.12=10.10.20.12/24,10.10.10.12/24
 
@@ -182,21 +196,21 @@ them from `terraform output fw_mgmt_private_ips` and `fw_ha2_private_ips`.
 
 ### B4b — Upgrade to PAN-OS 12.2.4 (mandatory)
 
-The deployment requires **PAN-OS 12.2.4 or later**. Frontier Virtual Patching needs it, and both
-pairs must run the same release. The newest VM-Series BYOL Marketplace image is 12.2.3, so the
+The deployment requires **PAN-OS 12.2.4 or later**. Frontier Virtual Patching needs it, and every
+pair must run the same release. The newest VM-Series BYOL Marketplace image is 12.2.3, so the
 firewalls are upgraded in place right after B4:
 
 ```bash
 bash scripts/scm-upgrade.sh AWS-HA-Transit 12.2.4
 ```
 
-- It upgrades only the units of the folder that are not on 12.2.4 yet. It excludes the others in
-  the upgrade rule (`exclude_devices`) and refuses to schedule if SCM did not store the
-  exclusion.
-- Both units of a pair reboot within seconds of each other, so expect a few minutes of outage
-  for that region.
-- Run it again after onboarding Region B (B10).
-- Check: `scm-verify.sh` (or the panel's Status page) shows 12.2.4 on every unit.
+- The script upgrades only the units of the folder that are not on 12.2.4 yet. The others are
+  excluded in the upgrade rule (`exclude_devices`), and the script refuses to schedule if SCM did
+  not store the exclusion.
+- It refuses to start while any device of the folder is disconnected.
+- Both units of a pair reboot within seconds of each other. Expect a few minutes of outage for
+  that region.
+- Check with `scm-verify.sh` (or the panel's Status page): 12.2.4 on every unit.
 
 ### B5 — Everything else (DC, PKI hosts, Guacamole, panel)
 
@@ -204,7 +218,7 @@ bash scripts/scm-upgrade.sh AWS-HA-Transit 12.2.4
 and policy the DC's SSM agent cannot come online.
 
 ```bash
-terraform apply        # DC (promoted to panw.labs), CA hosts, Guacamole, panel, ACM certificates
+terraform apply        # DC (promoted to panw.labs), CA hosts, Guacamole, panel, website, WAF, ACM
 ```
 
 ### B6 — PKI chain
@@ -220,37 +234,44 @@ DC_INSTANCE_ID=$(terraform output -raw dc_instance_id) bash scripts/setup-machin
 
 ### B7 — GlobalProtect (on EACH unit)
 
+Environment, for every `scm-gp-local.sh` mode:
+
 ```bash
-# env: SCM_*, GPAPI_PASSWORD (temporary admin), GP_USER_PASSWORD (test user gpuser),
-#      KEY_FILE (SSH private key of the firewalls)
+source <your env file>   # SCM_TSG_ID SCM_CLIENT_ID SCM_CLIENT_SECRET
+                         # GPAPI_PASSWORD (temporary admin) GP_USER_PASSWORD (test user gpuser)
+export KEY_FILE=<SSH private key of the firewalls>
 export JUMP_INSTANCE_ID=$(terraform output -raw ssm_jumphost_instance_id)
 export GW_FQDN=gw-a.<zone> CERT_CN=gp.<zone>
 for ip in 10.10.0.11 10.10.0.12; do
-  for mode in admin build letsencrypt cleanup; do FW_IP=$ip bash scripts/scm-gp-local.sh $mode; done
+  for mode in admin build letsencrypt; do FW_IP=$ip bash scripts/scm-gp-local.sh $mode; done
 done
 ```
 
+What each mode does:
 - `admin` creates a temporary superuser (`gpapi`) over SSH.
 - `build` writes the certificate placeholder, TLS profile, local auth, tunnel node, gateway and
   portal.
-- `letsencrypt` installs the real certificate.
-- `cleanup` deletes `gpapi` again.
+- `letsencrypt` installs the real certificate. Run it right after `build`: until then the unit
+  serves the placeholder certificate.
+- `cleanup` deletes `gpapi`. Run it **after B8 and B9**, which still need `gpapi`.
 
-A `FAILED` or exit code 142 after `admin`/`cleanup` is the SSH session timer. The firewall's own
-`Configuration committed successfully` line is the real result.
+On an active unit, every Frontier Virtual Patching content download (every few minutes) triggers
+an HA-Sync of about 2 minutes. Config writes during it fail with "A commit is pending".
+`build` waits it out.
+
+A message such as "commit job N … was still running when the session ended" (after `admin` or
+`cleanup`) means the commit outlived the SSH session. Check it with `show jobs id N`; it usually
+ends OK.
 
 ### B8 — Panel (if `enable_panel`)
 
 ```bash
-terraform -chdir=phase2-scm-config apply -parallelism=4   # rule panel-ldap-to-dc (already there after B4 with defaults)
-bash scripts/scm-push.sh AWS-HA-Transit
-
+# Rule panel-ldap-to-dc is created by B4 with the default panel_source_cidrs.
 # AD groups: panel-admins (sign in) + panel-operators (failover tests). AD accounts only.
 AWS_REGION=<region> DC_INSTANCE_ID=$(terraform output -raw dc_instance_id) \
   PANEL_USERS="admin" PANEL_OPERATORS="admin" bash scripts/panel-setup.sh ad
 
-# Firewall account panelro (role panel-ro) on both units; needs an existing superuser
-# (e.g. gpapi: run scm-gp-local.sh admin on each unit first, cleanup afterwards).
+# Firewall account panelro (role panel-ro) on every unit, created through gpapi (still there from B7).
 AWS_REGION=<region> JUMP_INSTANCE_ID=$(terraform output -raw ssm_jumphost_instance_id) \
   PANEL_SECRET_ARN=$(terraform output -raw panel_secret_arn) FW_IPS="10.10.0.11 10.10.0.12" \
   FW_ADMIN_USER=gpapi FW_ADMIN_PASSWORD="$GPAPI_PASSWORD" bash scripts/panel-setup.sh fw
@@ -259,93 +280,111 @@ AWS_REGION=<region> JUMP_INSTANCE_ID=$(terraform output -raw ssm_jumphost_instan
 ### B9 — Optional: Advanced IP Defense
 
 The rules use PANW's predefined IP lists (`panw-aipd-*`), which ship with the **threat content
-package**. A freshly booted firewall has none (`No valid threat content package exists`), and
-a push that contains the rules is rejected by every such unit: `Unknown address
-'panw-aipd-scanning-ip-list'`, seen live on a rebuilt Region B pair. So:
-- keep `ip_defense_mode = "off"` for the first deployment;
-- install content on **each** unit first: `FW_IP=<unit> scm-gp-local.sh admin`, then `content`,
-  then `cleanup`. `content` downloads and installs the latest Apps+Threats and Antivirus and
-  polls every job;
-- this applies to every new or rebuilt unit, for example Region B, before the next push.
+package**. A freshly booted firewall has none (`No valid threat content package exists`), and a
+push that contains the rules is rejected by every such unit (`Unknown address
+'panw-aipd-scanning-ip-list'`, seen live on a rebuilt Region B pair).
 
-Then set `ip_defense_mode = "alert"` (or `"block"`) in `phase2-scm-config/terraform.tfvars`,
-and apply and push:
+1. Install content on **each** unit first (same environment as B7; `gpapi` must exist):
+   ```bash
+   for ip in 10.10.0.11 10.10.0.12; do FW_IP=$ip bash scripts/scm-gp-local.sh content; done
+   ```
+   It downloads and installs the latest Apps+Threats and Antivirus and polls every job.
+2. Set `ip_defense_mode = "alert"` (or `"block"`) in `phase2-scm-config/terraform.tfvars`, then
+   apply and push:
+   ```bash
+   terraform -chdir=phase2-scm-config apply -parallelism=4
+   bash scripts/scm-push.sh AWS-HA-Transit
+   ```
+3. Remove the temporary admin from every unit:
+   ```bash
+   for ip in 10.10.0.11 10.10.0.12; do FW_IP=$ip bash scripts/scm-gp-local.sh cleanup; done
+   ```
 
-```bash
-terraform -chdir=phase2-scm-config apply -parallelism=4
-bash scripts/scm-push.sh AWS-HA-Transit
-```
+The rule mechanics are explained [below](#advanced-ip-defense--list-based-variant-ip_defense_mode--off--alert--block).
 
 ### B10 — Optional: Region B + Global Accelerator (multi-region)
 
 The second region uses the same `region_stack` (`eu-west-1`, CIDRs `10.2x.0.0/16`). Its
-firewalls join the **same SCM folder**. Only the region-specific values (floating IP and
-gateways) are overridden per device.
+firewalls join the **same SCM folder**; only the region-specific values (floating IP and
+gateways) are overridden per device. Steps, in order:
 
-1. Set the root `terraform.tfvars`:
-   ```hcl
-   enable_region_b = true
-   region_b        = "eu-west-1"
-   ```
-   Then apply in two passes. The cross-region resources iterate over Region B route tables,
-   which do not exist yet. `IncorrectState` / `InvalidTransitGatewayID.NotFound` on the first
-   pass is AWS eventual consistency: re-run.
+1. **Region B infrastructure.** Set `enable_region_b = true` and `region_b = "eu-west-1"` in the
+   root `terraform.tfvars`, then apply Region B alone first. The cross-region resources iterate
+   over Region B route tables, which do not exist yet. `IncorrectState` or
+   `InvalidTransitGatewayID.NotFound` on the first pass is AWS eventual consistency; re-run.
    ```bash
    terraform apply -target=module.region_b
    ```
-2. Set `enable_global_accelerator = true` and apply everything: TGW peering, cross-region routes,
-   GA, `gw-b`, and the panel's Region B pair.
+2. **Peering and Global Accelerator.** Set `enable_global_accelerator = true` and apply
+   everything: TGW peering, cross-region routes, GA, `gw-b` and the panel's Region B pair.
    ```bash
    terraform apply
    ```
-3. Run the SCM workspace with `gp_local_ips = ["10.10.10.100", "10.20.10.100"]` in
-   `phase2-scm-config/terraform.tfvars`:
+   Re-run once if the peering was not `available` yet (`IncorrectState`).
+3. **Onboard the Region B pair.** Add `"10.20.10.100"` to `gp_local_ips` in
+   `phase2-scm-config/terraform.tfvars`. Region B's first boot took about 35 minutes.
    ```bash
-   bash scripts/scm-onboard-fw.sh AWS-HA-Transit \
+   WAIT_MINUTES=60 bash scripts/scm-onboard-fw.sh AWS-HA-Transit \
      10.20.0.11=10.20.20.11/24,10.20.10.11/24,10.20.10.100/32,10.20.20.1,10.20.10.1 \
      10.20.0.12=10.20.20.12/24,10.20.10.12/24,10.20.10.100/32,10.20.20.1,10.20.10.1
    terraform -chdir=phase2-scm-config apply -parallelism=4
-   PRIMARY_SERIAL=... SECONDARY_SERIAL=... PRIMARY_MGMT_IP=10.20.0.11 SECONDARY_MGMT_IP=10.20.0.12 \
-     PRIMARY_HA2_IP=10.20.30.11 SECONDARY_HA2_IP=10.20.30.12 bash scripts/scm-ha.sh
-   bash scripts/scm-push.sh AWS-HA-Transit      # pushes to all four units; waits for every one
    ```
-   - The onboarding keeps the Region A entries in `fw_devices.auto.tfvars.json` and adds Region
-     B's.
-   - The Region B firewalls' first boot took about 35 minutes before they connected.
-4. Set `region_b_create_dc = true` and run `terraform apply` **after** step 3, because the DC
-   needs the Region B firewalls for egress. It joins `panw.labs` as an additional DC; promotion
-   takes 25–40 min. Check on either DC: `repadmin /replsummary` shows 0 fails. DC↔DC traffic
-   uses TGW peering directly, not the firewalls.
-5. Build GlobalProtect on EACH Region B unit, then rebuild the portal on the Region A units so
-   that **every** portal lists both gateways:
-   - common settings: `GATEWAYS="gw-a.<zone>:1 gw-b.<zone>:1"`;
-   - Region B units: `GW_FQDN=gw-b.<zone> GW_NAME=gp-gateway-eu-west FLOATING=10.20.10.100/32
-     IP_POOL=10.20.200.0/24 DNS_SERVER_PRIMARY=10.23.0.10 DNS_SERVER_SECONDARY=10.13.0.10`
-     (`admin`, `build`, `letsencrypt`);
-   - Region A units: `build` again with `GATEWAYS` and `DNS_SERVER_SECONDARY=10.23.0.10` (the
-     Let's Encrypt certificate is kept);
-   - finally run `cleanup` on all four units.
-6. Create `panelro` on the Region B units: `FW_IPS="10.20.0.11 10.20.0.12" ... panel-setup.sh fw`.
-7. Verify:
-   - `aws globalaccelerator list-endpoint-groups` (API region `us-west-2`) shows both regions
-     `HEALTHY`;
-   - `https://gw-b.<zone>/global-protect/prelogin.esp` answers with a trusted certificate;
-   - the panel topology shows both pairs.
-
-On an active unit, every Frontier Virtual Patching content download (every few minutes on
-12.2.4) is followed by an HA-Sync job of about 2 minutes. Config writes during it fail with
-"A commit is pending". `scm-gp-local.sh` waits it out.
+   The three extra fields are the floating IP and the two gateways. The onboarding keeps the
+   Region A entries in `fw_devices.auto.tfvars.json`.
+4. **Content, if IP Defense is on (B9).** Fresh units have no threat content, so run `admin` and
+   `content` on `10.20.0.11` and `10.20.0.12` before the push.
+5. **HA and push** to all four units:
+   ```bash
+   J=phase2-scm-config/fw_devices.auto.tfvars.json
+   PRIMARY_SERIAL=$(jq -r '.fw_devices|to_entries[]|select(.value.trust_ip=="10.20.20.11/24")|.key' $J) \
+   SECONDARY_SERIAL=$(jq -r '.fw_devices|to_entries[]|select(.value.trust_ip=="10.20.20.12/24")|.key' $J) \
+   PRIMARY_MGMT_IP=10.20.0.11 SECONDARY_MGMT_IP=10.20.0.12 \
+   PRIMARY_HA2_IP=10.20.30.11 SECONDARY_HA2_IP=10.20.30.12 bash scripts/scm-ha.sh
+   bash scripts/scm-push.sh AWS-HA-Transit      # waits for every connected unit
+   ```
+6. **Upgrade the Region B pair** to 12.2.4. The Region A pair is excluded automatically.
+   ```bash
+   bash scripts/scm-upgrade.sh AWS-HA-Transit 12.2.4
+   ```
+7. **Region B DC.** Set `region_b_create_dc = true` and run `terraform apply`. It needs the
+   Region B firewalls for egress. It joins `panw.labs` as an additional DC; promotion takes
+   25–40 min. Check on either DC: `repadmin /replsummary` shows 0 fails. DC↔DC traffic uses TGW
+   peering directly, not the firewalls.
+8. **GlobalProtect.** Every portal lists both gateways, `GATEWAYS="gw-a.<zone>:1 gw-b.<zone>:1"`.
+   Equal priority lets each client pick the best-responding gateway; use `:1` / `:2` to prefer
+   one.
+   - Region B units (`admin` if not done yet, then `build` and `letsencrypt`):
+     ```bash
+     GW_FQDN=gw-b.<zone> GW_NAME=gp-gateway-eu-west FLOATING=10.20.10.100/32 \
+     IP_POOL=10.20.200.0/24 DNS_SERVER_PRIMARY=10.23.0.10 DNS_SERVER_SECONDARY=10.13.0.10
+     ```
+     Global Accelerator starts sending Region B traffic as soon as port 443 answers, so run
+     `build` and `letsencrypt` back to back.
+   - Region A units: run `admin` and `build` again with `GATEWAYS` and
+     `DNS_SERVER_SECONDARY=10.23.0.10`. The Let's Encrypt certificate is kept.
+9. **Panel account on Region B:**
+   `FW_IPS="10.20.0.11 10.20.0.12" ... panel-setup.sh fw`. Then run `cleanup` on all four units.
+10. **Verify:**
+    - `aws globalaccelerator list-endpoint-groups --region us-west-2 --listener-arn …` shows
+      both regions `HEALTHY`;
+    - `https://gw-b.<zone>/global-protect/prelogin.esp` answers with a trusted certificate;
+    - the panel topology shows both pairs;
+    - a panel *HA failover* on Region B moves EIP and routes both ways.
 
 ### Verification checklist
 
 | Check | How | Expected |
 |---|---|---|
-| SCM sees the pair | `bash scripts/scm-verify.sh AWS-HA-Transit` | both connected, one `active` + one `passive`, our rules above `deny-all` |
+| SCM sees the pair(s) | `bash scripts/scm-verify.sh AWS-HA-Transit` | all units connected on 12.2.4, one `active` + one `passive` per pair, our rules above `deny-all` |
 | Portal | `curl -s https://gp.<zone>/global-protect/prelogin.esp` | `<status>Success</status>`, trusted certificate |
 | GP client | connect a GlobalProtect client to `gp.<zone>` as `gpuser` | tunnel up, DC reachable, DNS suffix set |
 | Guacamole | `https://rdp.<zone>/guacamole/` | login + TOTP enrolment, RDP to the DC |
-| Panel | `https://panel.<zone>/` | AD login; Status shows both units; Policy simulation answers |
-| HA moves everything | panel → Failover tests → *HA failover* | EIP **and** routes follow the active unit (topology), portal outage a few seconds |
+| Panel | `https://panel.<zone>/` | AD login; Status shows every unit; Policy simulation answers |
+| HA moves everything | panel → Failover tests → *HA failover* (each region) | EIP **and** routes follow the active unit, both ways; portal outage a few seconds |
+| Website + WAF | `curl -s -o /dev/null -w '%{http_code}' https://website.<zone>/` and a probe like `?id=1' OR '1'='1` | `200`; the probe `403` |
+| No path around CloudFront | `curl -m 8 http://<app NLB DNS name>/` | times out |
+| Global Accelerator | `aws globalaccelerator list-endpoint-groups --region us-west-2 --listener-arn <443 listener>` | every region `HEALTHY` |
+| Firewall ENIs | primary of each `fw1-untrust` / `fw1-trust` ENI (see [HA failover](#ha-failover-what-moves-and-why)) | the unit's own `.11`, never the floating `.100` (a plan postcondition also checks it) |
 
 ---
 
@@ -398,9 +437,20 @@ aws ec2 describe-network-interfaces --filters "Name=tag:Name,Values=<prefix>-fw1
   --query 'NetworkInterfaces[].[TagSet[?Key==`Name`]|[0].Value, PrivateIpAddresses[?Primary].PrivateIpAddress|[0]]' --output text
 ```
 
-A primary cannot be changed in place. Recreate the affected pair's firewalls
-(`terraform apply -replace=...aws_network_interface.fw[\"fw1-untrust\"] -replace=...aws_instance.fw[\"fw1\"]`),
-which costs new serials and BYOL activations, then onboard, set up HA, upgrade and build GP again.
+A primary cannot be changed in place. Recreate the affected pair's firewalls, which costs new
+serials and BYOL activations, then onboard, set up HA, upgrade and build GP again (B10 steps 3–9).
+For Region B:
+
+```bash
+F='module.region_b[0].module.firewall'
+R=""; for n in fw1-mgmt fw1-ha2 fw1-trust fw1-untrust fw2-mgmt fw2-ha2 fw2-trust fw2-untrust; do
+  R="$R -replace=$F.aws_network_interface.fw[\"$n\"]"; done
+terraform apply $R -replace="$F.aws_instance.fw[\"fw1\"]" -replace="$F.aws_instance.fw[\"fw2\"]" \
+  -target=$F -target='module.region_b[0].module.routing'
+terraform apply        # afterwards: panel, cross-region routes
+bash scripts/scm-folder-release.sh AWS-HA-Transit ngfw-shared <old serial 1> <old serial 2>
+```
+
 Done live for Region B. Two lessons from it:
 - Replace **all eight ENIs and both instances**, and limit `-target` to
   `module.region_b[0].module.firewall` and `module.region_b[0].module.routing`. The panel hosts
@@ -434,6 +484,10 @@ variables. init-cfg turns ARE on from the first boot.
 The firewalls launch on the newest PAN-OS that is both in the Marketplace for VM-Series BYOL and
 listed by SCM (`GET /config/device/v1/software-versions`). That was 12.2.3 at the time of
 writing.
+
+**The minimum supported release of this deployment is 12.2.4** (Frontier Virtual Patching, and
+one release on every unit). Until the Marketplace offers a 12.2.4 image, every fresh or rebuilt
+pair is upgraded in place right after onboarding (B4b, B10 step 6).
 
 An older release (11.1.15) failed SCM's bootstrap push: a tenant DLP data profile references an
 application (`general-browsing`) that release does not know. Changing `vmseries_version`
@@ -491,8 +545,10 @@ be refreshed against production ("No account exists with the provided key"). The
 3. Apply `module.custom_domain`.
 4. Run `letsencrypt` on each unit.
 
-**Multi-gateway portal.** `GATEWAYS="gw-a.<zone>:1 gw-b.<zone>:2"` lists several external
-gateways (FQDN and priority) on the portal. An IP would go in `<ip>`, not `<fqdn>`.
+**Multi-gateway portal.** `GATEWAYS="gw-a.<zone>:1 gw-b.<zone>:1"` lists several external
+gateways (FQDN and priority) on the portal. With equal priorities the client uses the
+best-responding gateway (*best available*); give one gateway a lower number to prefer it. An IP
+would go in `<ip>`, not `<fqdn>`.
 
 **DNS for clients.** The gateway pushes `DNS_SERVER_PRIMARY` (default the DC, `10.13.0.10`), an
 optional `DNS_SERVER_SECONDARY` and `DNS_SUFFIX` (default `panw.labs`). The VPC resolver cannot
@@ -540,11 +596,14 @@ retention period. Use a lab-only account and rotate it afterwards.
 
 Rules, in order:
 1. `geo-allow-only` blocks every source country not in `waf_allowed_countries` (lab: `["PL"]`;
-   default empty = no geo rule).
-2. A per-IP rate limit. The panel's failover page polls, about 150 requests per 5 min per open
-   tab, so the limit is 1000.
-3. AWS managed groups: IP reputation, anonymous IPs (VPN/Tor/hosting), known bad inputs (Log4j
-   and friends), the core rule set, and SQLi.
+   default empty = no geo rule). **Include your own country**, or you lock yourself out of the
+   panel.
+2. A per-IP rate limit per 5 minutes: `waf_panel_rate_limit` 1000 (the panel's failover page
+   polls, about 150 requests per 5 min per open tab) and `waf_website_rate_limit` 2000.
+3. AWS managed groups: IP reputation, anonymous IPs (VPN/Tor), known bad inputs (Log4j and
+   friends), the core rule set, and SQLi. The anonymous-IP group's `HostingProviderIPList` rule is
+   set to **count**: it would block every visitor coming from a cloud provider, including your own
+   tests from EC2.
 
 Blocks show up in CloudWatch metrics and as WAF sampled requests per rule.
 
@@ -663,6 +722,10 @@ routes point at, and whether the portal answers.
 | HA failover | suspend the active unit, wait for the takeover, restore it, fail back | ~1 min (measured 47 s) |
 | Hard failover | stop the active unit's EC2 instance, takeover, start it, wait until it is passive and synchronized, fail back | ~9 min (measured ~7.5 min; PAN-OS boot) |
 | Region outage | stop BOTH units of a region (portal moves to the other region via GA), observe 30 s, start them, wait for a clean pair, fail back | ~10 min (measured 8.5 min with a 60 s observation) |
+
+The "typical" durations the panel shows are the measured times plus 30 %, rounded down to whole
+minutes. A region test starts only when the other region's pair is clean and Global Accelerator
+reports it healthy, so clients always have somewhere to go.
 | Align the pair | make the preferred primary (lowest HA priority) active again | ~1 min |
 | Recover | start stopped units, clear `suspended`, wait for a clean pair | varies |
 
@@ -670,6 +733,13 @@ routes point at, and whether the portal answers.
   switchover (the AWS IP move).
 - Every run is stored in DynamoDB (`<prefix>-panel-runs`), with its phases, timeline, portal
   outages (probed every second until the portal is back) and history.
+
+**Topology.** The panel learns which pairs exist (instance ids, regions, management IPs) and
+the Global Accelerator ARN from the SSM parameter `/panel/<prefix>/topology`, which Terraform
+writes. The hosts re-read it every 60 s, so adding Region B or rebuilding firewalls never
+replaces the panel hosts (they used to be recreated whenever an instance id changed, which forced
+create-before-destroy on the firewall ENIs). SSM refuses parameter names that start with `aws` or
+`ssm`, hence the `/panel/` prefix.
 
 Guard rails:
 - a typed confirmation;
@@ -689,7 +759,7 @@ authorized to perform this operation").
 Known limits:
 - The AD bind is NTLM over plain LDAP (the DC has no LDAPS certificate yet).
 - A host replaced *during* a test interrupts it. The run shows as "interrupted"; use *Recover*.
-- Region failure needs Region B.
+- The region test needs Region B and Global Accelerator.
 
 ---
 
@@ -736,7 +806,19 @@ line. After reusing licence slots, SCM took tens of minutes to list the new seri
 a device in the Customer Support Portal removes it from SCM.
 
 **`scm-onboard-fw.sh` waits forever.** A management-IP key matches only a **connected** device.
-Stale entries of replaced firewalls (same IP, disconnected) are ignored on purpose.
+Stale entries of replaced firewalls (same IP, disconnected) are ignored on purpose. After a
+rebuild, if SCM is slow to list the new units, pass their serials as keys instead.
+
+**Push rejected with `Unknown address 'panw-aipd-…'`.** The unit has no threat content yet (fresh
+boot or rebuild) and IP Defense is on. Run `admin` + `content` on it (B9), then push again.
+
+**`A commit is pending` from `scm-gp-local.sh`.** The active unit is HA-syncing after a content
+download (about 2 minutes, every few minutes with Frontier Virtual Patching). The script retries;
+if it gives up, run the mode again.
+
+**Firewall never appears and the system log shows `NOV-021 Insufficient credits`.** The BYOL
+credit pool is empty; deactivate old serials in the Customer Support Portal, then recreate the
+instances (`-replace` on `aws_instance.fw`).
 
 **Hostname is `ip-10-10-0-11`, not `fw1`.** DHCP overrides the init-cfg hostname. Identify devices
 by serial or management IP. In SCM the device `name` is the serial.
