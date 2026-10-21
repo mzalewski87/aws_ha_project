@@ -40,7 +40,7 @@
 #             with priority 1). Multi-region: GATEWAYS="gw-a.<zone>:1 gw-b.<zone>:2" on the
 #             portal units of BOTH regions; clients then pick the best-available gateway.
 #
-# Usage: scm-gp-local.sh <admin|build|letsencrypt|cleanup>
+# Usage: scm-gp-local.sh <admin|build|letsencrypt|cleanup|content>
 ###############################################################################
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,6 +76,7 @@ active_fw_ip() {
             and (($want | length) == 0 or (.ip_address as $i | $want | index($i)) != null)))
         | first | .ip_address // empty'
 }
+FW_IP_GIVEN="${FW_IP:-}"
 FW_IP="${FW_IP:-$(active_fw_ip)}"
 [ -n "$FW_IP" ] || scm_die "no connected ACTIVE firewall found in SCM"
 scm_log "active firewall: $FW_IP"
@@ -255,19 +256,23 @@ letsencrypt)
   commit_wait ;;
 
 content)
+  # Content is per unit (PAN-OS does not copy it to the HA peer), so name the unit explicitly.
+  [ -n "${FW_IP_GIVEN:-}" ] || scm_die "content needs FW_IP=<unit mgmt IP>; run it once per unit"
   api_login
   job_wait() {  # $1 = op XML that starts a job; $2 = label
     local r job j st res
-    r="$(curl -sk -m 120 "$BASE" --data-urlencode type=op --data-urlencode "cmd=$1" --data-urlencode "key=$KEY")"
-    job="$(grep -o '<job>[0-9]*' <<<"$r" | cut -c6-)"
+    # Every substitution ends in || true: under set -e a grep that finds nothing (no job id, no
+    # status yet) or a transient curl timeout would otherwise end the script silently.
+    r="$(curl -sk -m 120 "$BASE" --data-urlencode type=op --data-urlencode "cmd=$1" --data-urlencode "key=$KEY" || true)"
+    job="$(grep -o '<job>[0-9]*' <<<"$r" | cut -c6- || true)"
     if [ -z "$job" ]; then
       grep -qi "already\|no update\|up to date\|is the latest" <<<"$r" && { scm_log "OK    $2: nothing to do"; return 0; }
       scm_die "$2 did not start: $(tr -d '\n' <<<"$r" | cut -c1-300)"
     fi
     for _ in $(seq 1 120); do
-      j="$(curl -sk -m 60 "$BASE" --data-urlencode type=op --data-urlencode "cmd=<show><jobs><id>$job</id></jobs></show>" --data-urlencode "key=$KEY")"
-      st="$(grep -o '<status>[A-Z]*' <<<"$j" | head -1 | cut -c9-)"
-      res="$(grep -o '<result>[A-Za-z][A-Za-z]*' <<<"$j" | head -1 | cut -c9-)"
+      j="$(curl -sk -m 60 "$BASE" --data-urlencode type=op --data-urlencode "cmd=<show><jobs><id>$job</id></jobs></show>" --data-urlencode "key=$KEY" || true)"
+      st="$(grep -o '<status>[A-Z]*' <<<"$j" | head -1 | cut -c9- || true)"
+      res="$(grep -o '<result>[A-Za-z][A-Za-z]*' <<<"$j" | head -1 | cut -c9- || true)"
       if [ "$st" = "FIN" ]; then
         [ "$res" = "OK" ] && { scm_log "OK    $2 (job $job)"; return 0; }
         scm_die "$2 failed (job $job): $(sed -E 's/<[^>]+>/ /g' <<<"$j" | tr -s ' ' | cut -c1-400)"

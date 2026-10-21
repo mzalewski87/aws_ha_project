@@ -111,6 +111,12 @@ resource "aws_network_interface" "fw" {
   # ignored too, so ENIs created before the ordered list existed are not touched.)
   lifecycle {
     ignore_changes = [private_ips, private_ip_list, private_ip_list_enabled]
+    # Fail loudly if AWS ever made another address the primary (e.g. the floating IP): HA
+    # failover would then move the wrong address. Checked on every plan/apply.
+    postcondition {
+      condition     = self.private_ip == each.value.private_ips[0]
+      error_message = "ENI ${each.key}: primary is ${self.private_ip}, expected ${each.value.private_ips[0]}. The floating IP must be a secondary; recreate this ENI and its firewall (docs/DEPLOYMENT-SCM.md, HA failover)."
+    }
   }
 }
 

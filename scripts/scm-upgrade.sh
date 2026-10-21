@@ -51,9 +51,9 @@ scm_api GET "/config/setup/v1/devices?limit=500" | jq -r --arg f "$FOLDER" \
 # upgrading a second region's pair would also hit the pair that is already up to date.
 devs_all="$(scm_api GET "/config/setup/v1/devices?limit=500")"
 excl="$(jq -c --arg f "$FOLDER" --arg v "$VERSION" '[(.data // [])[] | select(.folder == $f)
-         | select(.software_version as $s | $s == $v or ($s | startswith($v + "-"))) | .name]' <<<"$devs_all")"
+         | select((.software_version // "") as $s | $s == $v or ($s | startswith($v + "-"))) | .name] | sort' <<<"$devs_all")"
 todo="$(jq -r --arg f "$FOLDER" --arg v "$VERSION" '[(.data // [])[] | select(.folder == $f)
-         | select((.software_version as $s | $s == $v or ($s | startswith($v + "-"))) | not) | .name] | join(",")' <<<"$devs_all")"
+         | select(((.software_version // "") as $s | $s == $v or ($s | startswith($v + "-"))) | not) | .name] | join(",")' <<<"$devs_all")"
 [ -n "$todo" ] || { scm_log "every firewall in '$FOLDER' already runs $VERSION — nothing to do"; exit 0; }
 scm_log "to upgrade: $todo; excluded (already on $VERSION): $(jq -r 'join(",")' <<<"$excl")"
 rule="$(jq -nc --arg n "$NAME" --arg f "$FOLDER" --argjson x "$excl" \
@@ -68,12 +68,15 @@ if [ -z "$rule_id" ]; then
 else
   scm_api PUT "$BASE/software-upgrade-rules/$rule_id" "$rule" >/dev/null \
     || scm_die "could not update upgrade rule $NAME ($rule_id)"
-  stored="$(scm_api GET "$BASE/software-upgrade-rules?name=$(scm_urlenc "$NAME")" \
-    | jq -c --arg n "$NAME" '(if type=="array" then . else (.data // []) end) | map(select(.name == $n)) | first | .match_criteria')"
-  [ "$(jq -c '.exclude_devices // []' <<<"$stored")" = "$excl" ] \
-    || scm_die "rule $NAME did not keep the exclusion list (stored: $stored) — refusing to upgrade units that are already on $VERSION"
-  scm_log "updated upgrade rule $NAME: $stored"
+  scm_log "updated upgrade rule $NAME"
 fi
+# Verify what SCM STORED (both paths): an exclusion the API silently dropped would upgrade, and
+# reboot, the pair that is already up to date. Order-insensitive comparison.
+stored="$(scm_api GET "$BASE/software-upgrade-rules?name=$(scm_urlenc "$NAME")" \
+  | jq -c --arg n "$NAME" '(if type=="array" then . else (.data // []) end) | map(select(.name == $n)) | first | .match_criteria')"
+[ "$(jq -c '(.exclude_devices // []) | sort' <<<"$stored")" = "$excl" ] \
+  || scm_die "rule $NAME did not keep the exclusion list (stored: $stored) — refusing to upgrade units that are already on $VERSION"
+scm_log "rule $NAME stored: $stored"
 
 # What the live API actually wants (found by probing with disabled schedules; the OpenAPI is
 # wrong on these points):

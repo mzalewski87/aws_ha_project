@@ -117,9 +117,13 @@ class Ctx:
     """units: the pair under test. others: units of the OTHER region(s), only read (the region
     outage test refuses to start unless another region has an active unit to take the traffic)."""
 
-    def __init__(self, api, ec2, job, units, sleep=time.sleep, clock=time.monotonic, others=()):
+    def __init__(self, api, ec2, job, units, sleep=time.sleep, clock=time.monotonic, others=(),
+                 others_ready=None):
         self.api, self.ec2, self.job, self.units = api, ec2, job, list(units)
         self.others = list(others)
+        # optional extra gate for the region test, e.g. "Global Accelerator rates the other
+        # region HEALTHY": returns (ok, message)
+        self.others_ready = others_ready
         self.sleep, self.clock = sleep, clock
 
     def ha(self, unit):
@@ -328,6 +332,30 @@ def hard_failover(ctx):
     _restore(ctx)
 
 
+def _start_all(ctx, units):
+    """Start every unit, even if one of them fails: wait for 'stopped' first (start on a
+    'stopping' instance is refused), retry each start, raise only after trying them all."""
+    errors = []
+    for u in units:
+        try:
+            ctx.wait(lambda u=u: ctx.ec2.state(u) in ("stopped", "running", "pending"), f"{u} stopped (before start)", 420, 5)
+            if ctx.ec2.state(u) == "stopped":
+                for attempt in range(3):
+                    try:
+                        ctx.ec2.start(u)
+                        break
+                    except Exception as exc:
+                        if attempt == 2:
+                            raise
+                        ctx.job.log(f"start {u} failed ({exc}); retrying", "warn")
+                        ctx.sleep(10)
+        except Exception as exc:
+            errors.append(f"{u}: {exc}")
+            ctx.job.log(f"could not start {u}: {exc}", "error")
+    if errors:
+        raise Aborted("some firewalls could not be started: " + "; ".join(errors) + ". Use 'Recover'.")
+
+
 def region_outage(ctx):
     """Take a whole region's pair down (both EC2 instances), watch the portal move to the other
     region (Global Accelerator health checks), then bring the region back and fail back."""
@@ -335,8 +363,14 @@ def region_outage(ctx):
     if not ctx.others:
         raise Aborted("no other region is configured: a region outage would just be an outage")
     alive = [u for u in ctx.others if ctx.is_active(u)]
-    if not alive:
-        raise Aborted("the other region has no active firewall to take over; refusing to start")
+    passive = [u for u in ctx.others if (ctx.ha(u) or {}).get("state") == "passive"]
+    if len(alive) != 1 or len(passive) != 1:
+        raise Aborted("the other region is not a clean active/passive pair; refusing to take this region down")
+    if ctx.others_ready is not None:
+        ok, msg = ctx.others_ready()
+        if not ok:
+            raise Aborted(f"the other region is not ready to take over: {msg}")
+        ctx.job.log(msg)
     x, y = find_roles(ctx)
     ensure_synced(ctx, x, y)
     for u in ctx.units:
@@ -352,15 +386,14 @@ def region_outage(ctx):
             ctx.ec2.stop(u)
         return ctx.wait(lambda: all(ctx.ec2.state(u) == "stopped" for u in ctx.units),
                         "both firewalls of this region stopped", 420, 5)
-    _undo_on_abort(ctx, go, lambda: [ctx.ec2.start(u) for u in ctx.units])
+    _undo_on_abort(ctx, go, lambda: _start_all(ctx, ctx.units))
     ctx.job.mark("region down")
     ctx.job.enter("observe")
     ctx.job.log("observing the portal for 30s: it should now be answered by the other region")
     ctx.sleep(30)
     ctx.job.enter("start the region")
     ctx.job.mark("EC2 start " + " + ".join(ctx.units))
-    for u in ctx.units:
-        ctx.ec2.start(u)
+    _start_all(ctx, ctx.units)
     ctx.wait(lambda: all(ctx.ec2.state(u) == "running" for u in ctx.units), "both firewalls running", 240)
     ctx.job.enter("boot and rejoin HA")
     ctx.job.log("PAN-OS boots on both units and they elect an active one (typically 6-10 minutes)")

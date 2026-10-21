@@ -19,9 +19,13 @@ variable "allowed_countries" {
   default     = []
 }
 variable "rate_limit" {
-  description = "Max requests per source IP in any 5-minute window (WAF minimum: 10)."
+  description = "Max requests per source IP in any 5-minute window (WAF accepts 10 - 2000000000)."
   type        = number
   default     = 1000
+  validation {
+    condition     = var.rate_limit >= 10 && var.rate_limit <= 2000000000
+    error_message = "rate_limit must be between 10 and 2000000000."
+  }
 }
 variable "resource_arns" {
   description = "REGIONAL only: ALB ARNs to attach the ACL to."

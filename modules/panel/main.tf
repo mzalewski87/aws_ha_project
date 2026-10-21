@@ -168,7 +168,7 @@ resource "aws_iam_role_policy" "topology" {
         # Read-only: which region's portal Global Accelerator considers healthy.
         Effect   = "Allow"
         Action   = ["globalaccelerator:ListListeners", "globalaccelerator:ListEndpointGroups", "globalaccelerator:DescribeAccelerator"]
-        Resource = "*"
+        Resource = var.ga_arn != "" ? [var.ga_arn, "${var.ga_arn}/*"] : ["*"]
       },
       {
         Effect   = "Allow"
@@ -195,6 +195,34 @@ resource "aws_iam_role_policy" "failover" {
         ]
       }
     ]
+  })
+}
+
+# Topology (firewall pairs of every region, their mgmt IPs / instance and ENI ids, the GA ARN)
+# lives in an SSM parameter the app re-reads every minute — NOT in user_data. The hosts are
+# create_before_destroy; anything their user_data references is forced into
+# create_before_destroy too, and with firewall ENI ids in it a firewall rebuild failed with
+# "InvalidIPAddress.InUse" (seen live). Now a firewall change only rewrites this parameter.
+# Name starts with /panel/, not with the prefix: SSM reserves names beginning with "aws" or "ssm"
+# (any case), and the lab prefix is "awsscm" ("No access to reserved parameter name", seen live).
+resource "aws_ssm_parameter" "topology" {
+  name = "/panel/${var.name_prefix}/topology"
+  type = "String"
+  tier = "Standard"
+  value = jsonencode({
+    pairs  = var.pairs
+    ga_arn = var.ga_arn
+    fw_ips = var.fw_mgmt_ips
+  })
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy" "topology_param" {
+  name = "read-panel-topology"
+  role = aws_iam_role.host.id
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Action = ["ssm:GetParameter"], Resource = aws_ssm_parameter.topology.arn }]
   })
 }
 
@@ -272,13 +300,13 @@ resource "aws_instance" "panel" {
     netbios     = upper(split(".", var.domain_name)[0])
     base_dn     = local.base_dn
     admin_group = var.admin_group
-    fw_ips      = join(",", var.fw_mgmt_ips)
     spoke_host  = var.spoke_host
     # Failover tests (empty map = disabled; the app then hides the controls).
-    topo_b64         = base64encode(jsonencode({ pairs = var.pairs }))
+    # The NAME as a plain string, not aws_ssm_parameter.topology.name: a reference would make the
+    # hosts depend on the parameter and, through it, on the firewall ENIs again.
+    topo_param       = "/panel/${var.name_prefix}/topology"
     failover_enabled = var.enable_failover ? "1" : "0"
     runs_table       = aws_dynamodb_table.runs.name
-    ga_arn           = var.ga_arn
     operator_group   = var.operator_group
     gp_fqdn          = var.gp_portal_fqdn
     app_secret_id    = aws_secretsmanager_secret.app.id

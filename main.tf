@@ -180,7 +180,10 @@ module "region_b" {
   ssh_public_key   = var.ssh_public_key
 
   create_app = var.region_b_create_app
-  create_dc  = var.region_b_create_dc
+  # Same protection as Region A's app, if Region B runs one (the website ACL is global/CloudFront).
+  app_nlb_cloudfront_only = var.app_nlb_cloudfront_only
+  app_web_acl_id          = local.web_waf_on ? module.website_waf[0].arn : ""
+  create_dc               = var.region_b_create_dc
   # ONE PKI per forest, not one per region. Region B's domain controller is a
   # replica of the SAME forest, so a second hierarchy there would be a separate
   # trust anchor that no client is configured to trust — and the offline root

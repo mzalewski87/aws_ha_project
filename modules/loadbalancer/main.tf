@@ -60,8 +60,13 @@ resource "aws_lb" "app" {
 }
 
 # One target group + listener per TCP port; all point at the FW untrust IPs.
+locals {
+  # With cloudfront_only nothing but CloudFront may reach the NLB, so only its origin port exists.
+  listener_ports = toset([for p in(var.cloudfront_only ? var.cloudfront_origin_ports : var.listeners) : tostring(p)])
+}
+
 resource "aws_lb_target_group" "app" {
-  for_each = toset([for p in var.listeners : tostring(p)])
+  for_each = local.listener_ports
 
   name        = "${var.name_prefix}-app-tg-${each.key}"
   port        = tonumber(each.key)
@@ -79,7 +84,7 @@ resource "aws_lb_target_group" "app" {
 
 resource "aws_lb_target_group_attachment" "app" {
   for_each = {
-    for pair in setproduct([for p in var.listeners : tostring(p)], var.target_ips) :
+    for pair in setproduct(tolist(local.listener_ports), var.target_ips) :
     "${pair[0]}-${pair[1]}" => { port = pair[0], ip = pair[1] }
   }
 
@@ -89,7 +94,7 @@ resource "aws_lb_target_group_attachment" "app" {
 }
 
 resource "aws_lb_listener" "app" {
-  for_each = toset([for p in var.listeners : tostring(p)])
+  for_each = local.listener_ports
 
   load_balancer_arn = aws_lb.app.arn
   port              = tonumber(each.key)

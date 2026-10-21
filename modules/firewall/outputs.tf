@@ -9,12 +9,12 @@ output "instance_ids" {
 
 output "mgmt_private_ips" {
   description = "FW mgmt private IPs (for the Phase 2b serial-registration script)."
-  value       = { for fw in local.fw_names : fw => tolist(aws_network_interface.fw["${fw}-mgmt"].private_ips)[0] }
+  value       = { for fw in local.fw_names : fw => aws_network_interface.fw["${fw}-mgmt"].private_ip }
 }
 
 output "ha2_private_ips" {
   description = "FW HA2 ENI private IP per fw — the HA2_IP input for scripts/configure-ha.sh."
-  value       = { for fw in local.fw_names : fw => tolist(aws_network_interface.fw["${fw}-ha2"].private_ips)[0] }
+  value       = { for fw in local.fw_names : fw => aws_network_interface.fw["${fw}-ha2"].private_ip }
 }
 
 output "trust_eni_ids" {
@@ -29,7 +29,7 @@ output "untrust_eni_ids" {
 
 output "untrust_primary_ips" {
   description = "FW untrust primary private IPs (LB-sandwich target registration)."
-  value       = { for fw in local.fw_names : fw => tolist(aws_network_interface.fw["${fw}-untrust"].private_ips)[0] }
+  value       = { for fw in local.fw_names : fw => aws_network_interface.fw["${fw}-untrust"].private_ip }
 }
 
 # Initial active FW trust ENI — the dataplane next hop for TGW inspection routes.

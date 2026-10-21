@@ -15,7 +15,10 @@
 #   3. phase2-scm-config:  terraform apply -parallelism=4        (device overrides)
 #
 # Usage:
-#   scm-onboard-fw.sh <folder> <serial|hostname>=<trust_cidr>,<untrust_cidr> [...]
+#   scm-onboard-fw.sh <folder> <serial|mgmt_ip>=<trust_cidr>,<untrust_cidr>[,<floating_cidr>,<trust_gw>,<untrust_gw>] [...]
+#   The three optional fields override the folder defaults (Region A values) for a pair in another
+#   region. Existing entries of the tfvars file are kept (REPLACE=1 starts empty). After a pair
+#   REBUILD prefer serials as keys: SCM can list the old unit as connected for a while.
 #   e.g. scm-onboard-fw.sh AWS-HA-Transit <serial1>=10.10.20.11/24,10.10.10.11/24 \
 #                                         <serial2>=10.10.20.12/24,10.10.10.12/24
 #   KEY = the firewall's SERIAL or its MANAGEMENT IP (root output fw_mgmt_private_ips; only a

@@ -147,6 +147,28 @@ class Scenarios(unittest.TestCase):
         self.assertEqual(f.calls[4:], [("suspend", "fw2"), ("functional", "fw2")])  # failback to fw1
         self.assertEqual(f.ha_state, {"fw1": "active", "fw2": "passive"})
 
+    def test_region_outage_refuses_when_global_accelerator_says_the_other_region_is_unhealthy(self):
+        f = Fake()
+        ctx = make(f, others=["b1", "b2"])
+        ctx.others_ready = lambda: (False, "Global Accelerator: eu-west-1 is UNHEALTHY")
+        fc.run_job(ctx, fc.region_outage)
+        self.assertEqual(ctx.job.status, "failed")
+        self.assertEqual(f.calls, [])
+
+    def test_start_all_keeps_going_after_one_failure(self):
+        f = Fake()
+        f.ec2_state = {"fw1": "stopped", "fw2": "stopped"}
+        real = f.start
+        def start(u):
+            if u == "fw1":
+                raise RuntimeError("throttled")
+            real(u)
+        f.start = start
+        ctx = make(f)
+        with self.assertRaises(fc.Aborted):
+            fc._start_all(ctx, ["fw1", "fw2"])
+        self.assertIn(("start", "fw2"), f.calls)  # fw2 still started
+
     def test_region_outage_refuses_without_a_live_other_region(self):
         f = Fake()
         ctx = make(f)

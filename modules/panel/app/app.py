@@ -3,7 +3,7 @@
 Viewers (AD group PANEL_ADMIN_GROUP) only read:
   * login against Active Directory (NTLM bind, so the password is never sent in clear) and a
     required group (PANEL_ADMIN_GROUP);
-  * status of each firewall (HA state, version) through the PAN-OS XML API with a READ-ONLY admin;
+  * status of each firewall (HA state, version) through the PAN-OS XML API with a restricted admin (role panel-ro: XML-API operational commands only, no configuration access);
   * `test security-policy-match`: ask the firewall which rule a session WOULD hit. This checks
     Advanced IP Defense / policy without sending a single packet to a real malicious address;
   * a sample from one of PANW's predefined IP lists, so a test can use an address that really is
@@ -35,6 +35,8 @@ CFG = {
     "topo": json.loads(base64.b64decode(os.environ.get("PANEL_TOPO_B64", "") or "e30=").decode()),
     "failover_enabled": os.environ.get("PANEL_FAILOVER_ENABLED", "0") == "1",
     "runs_table": os.environ.get("PANEL_RUNS_TABLE", ""),
+    # SSM parameter with {pairs, ga_arn, fw_ips}; re-read every minute (see load_topology)
+    "topo_param": os.environ.get("PANEL_TOPO_PARAM", ""),
     "ga_arn": os.environ.get("PANEL_GA_ARN", ""),   # Global Accelerator in front of the portal
     "operator_group": os.environ.get("PANEL_OPERATOR_GROUP", "panel-operators"),
     "gp_fqdn": os.environ.get("PANEL_GP_FQDN", ""),
@@ -53,14 +55,43 @@ CFG = {
 }
 
 # Pairs: {"a": {"label", "region", "eip_allocation_id", "public_ip", "units": {name: {ip, id,
-# untrust_eni, trust_eni}}}, "b": {...}}. Unit names are unique across pairs (e.g. a-fw1).
-if "pairs" not in CFG["topo"] and CFG["topo"].get("units"):
-    CFG["topo"] = {"pairs": {"a": {"label": "Region A", "region": CFG["region"],
-                                   **{k: v for k, v in CFG["topo"].items() if k != "pairs"}}}}
-for _p in CFG["topo"].get("pairs", {}).values():
-    _p.setdefault("region", CFG["region"])
-    for _u in _p.get("units", {}).values():
-        _u["region"] = _p["region"]
+# untrust_eni, trust_eni}}}, "b": {...}}. Unit names are unique across pairs (e.g. b-fw1).
+def _normalise(topo):
+    if "pairs" not in topo and topo.get("units"):
+        topo = {"pairs": {"a": {"label": "Region A", "region": CFG["region"],
+                                **{k: v for k, v in topo.items() if k != "pairs"}}}}
+    for p in topo.get("pairs", {}).values():
+        p.setdefault("region", CFG["region"])
+        for u in p.get("units", {}).values():
+            u["region"] = p["region"]
+    return topo
+
+
+CFG["topo"] = _normalise(CFG["topo"])
+_topo_state = {"ts": 0.0}
+_topo_lock = threading.Lock()
+
+
+def load_topology():
+    """Refresh the topology from the SSM parameter (at most once a minute). The parameter is
+    written by Terraform whenever a firewall changes, so the hosts never need replacing for it.
+    On any error the last known topology stays in use."""
+    if not CFG["topo_param"] or time.time() - _topo_state["ts"] < 60:
+        return
+    with _topo_lock:
+        if time.time() - _topo_state["ts"] < 60:
+            return
+        _topo_state["ts"] = time.time()
+        try:
+            import boto3
+            raw = boto3.client("ssm", region_name=CFG["region"] or None).get_parameter(
+                Name=CFG["topo_param"])["Parameter"]["Value"]
+            data = json.loads(raw)
+            CFG["topo"] = _normalise({"pairs": data.get("pairs", {})})
+            CFG["ga_arn"] = data.get("ga_arn", "") or CFG["ga_arn"]
+            CFG["fw_ips"] = list(data.get("fw_ips") or CFG["fw_ips"])
+        except Exception as exc:
+            print(json.dumps({"event": "topology_param_error", "error": f"{type(exc).__name__}: {exc}"[:300]}), flush=True)
 
 for _k, _cn in (("group_dn", "group"), ("operator_group_dn", "operator_group")):
     CFG[_k] = os.environ.get("PANEL_" + _k.upper(), f"CN={CFG[_cn]},CN=Users,{CFG['base_dn']}").lower()
@@ -267,6 +298,7 @@ def home():
     gate = need_login()
     if gate:
         return gate
+    load_topology()
     rows = []
     for ip in CFG["fw_ips"]:
         row = {"ip": ip}
@@ -301,8 +333,10 @@ def rulebase(ip):
 
 
 def active_ip():
-    """Mgmt IP of the active unit (it is the one that really decides); first unit as a fallback."""
-    for u in units().values():
+    """Mgmt IP of the active unit (it is the one that really decides); first unit as a fallback.
+    The home region's pair is asked first, so a down region elsewhere costs nothing."""
+    home = sorted(units().values(), key=lambda u: (u.get("region") != CFG["region"], u["ip"]))
+    for u in home:
         try:
             if (core.parse_ha(fw_op(u["ip"], core.HA_CMD, timeout=5)).get("state") or "").startswith("active"):
                 return u["ip"]
@@ -429,6 +463,7 @@ def ec2_client(region=None):
 
 
 def pairs():
+    load_topology()
     return CFG["topo"].get("pairs", {})
 
 
@@ -613,7 +648,17 @@ def start_job(scenario, user, ip, restore, run_id=None, pair=None):
     stop = threading.Event()
     mine = sorted(pairs()[pair]["units"])
     others = sorted(n for k, p in pairs().items() if k != pair for n in p.get("units", {}))
-    ctx = fo.Ctx(HttpApi(), Ec2Api(), job, mine, others=others)
+    other_regions = sorted({p["region"] for k, p in pairs().items() if k != pair})
+
+    def others_ready():
+        """Global Accelerator must rate another region HEALTHY before we take this one down."""
+        ga = ga_state()
+        if not ga or not ga["groups"]:
+            return True, "no Global Accelerator data: relying on the firewalls' HA state only"
+        good = [r for r in other_regions if ga["groups"].get(r, {}).get("health") == "HEALTHY"]
+        return (bool(good), "Global Accelerator: " + ", ".join(
+            f"{r} {ga['groups'].get(r, {}).get('health', 'n/a')}" for r in other_regions))
+    ctx = fo.Ctx(HttpApi(), Ec2Api(), job, mine, others=others, others_ready=others_ready)
     job.listeners.append(lambda j: STORE.put(job_doc(j, probe)))
 
     def prober():
@@ -677,9 +722,12 @@ def ga_state():
                 continue
             for g in ga.list_endpoint_groups(ListenerArn=lst["ListenerArn"])["EndpointGroups"]:
                 health = [e.get("HealthState", "UNKNOWN") for e in g.get("EndpointDescriptions", [])]
+                # GA routes to any healthy endpoint of a group; a 0 % dial gets no traffic at all.
+                dial = g.get("TrafficDialPercentage", 100)
                 data["groups"][g["EndpointGroupRegion"]] = {
-                    "health": "HEALTHY" if health and all(h == "HEALTHY" for h in health) else (health[0] if health else "UNKNOWN"),
-                    "dial": g.get("TrafficDialPercentage", 100)}
+                    "health": ("HEALTHY" if any(h == "HEALTHY" for h in health) else (health[0] if health else "UNKNOWN"))
+                              if dial > 0 else "DIAL 0 %",
+                    "dial": dial}
     except Exception as exc:
         print(json.dumps({"event": "ga_error", "error": f"{type(exc).__name__}: {exc}"[:300]}), flush=True)
         data["error"] = f"Global Accelerator lookup failed ({type(exc).__name__})."
@@ -828,7 +876,7 @@ def failover():
             message = "A region outage test needs a second region."
         elif request.form.get("confirm", "") != "FAILOVER":
             message = "Type FAILOVER in the confirmation box to start."
-        elif time.time() - session.get("login_at", 0) > OPERATOR_FRESH_LOGIN:
+        elif scenario not in ("recover", "rebalance") and time.time() - session.get("login_at", 0) > OPERATOR_FRESH_LOGIN:
             # Group membership is read at sign-in; a fresh sign-in picks up AD changes.
             message = "For disruptive tests please sign out and sign in again (last sign-in is over an hour old)."
         else:
@@ -868,7 +916,9 @@ primary is active again (one more short switchover, measured too)</label></p>
 <button>Start</button></p>
 <p class=muted>Tests refuse to start unless one firewall is active and the other passive; configuration sync is
 checked and repaired first. The region outage test stops both firewalls of the chosen region; the portal
-should then be answered by the other region through Global Accelerator.</p></form>{% endif %}
+should then be answered by the other region through Global Accelerator. While Region A is down the panel
+login itself is unavailable (it binds to the DC through Region A's firewalls) — stay signed in; Recover and
+Align do not ask for a fresh sign-in.</p></form>{% endif %}
 {% if message %}<p><b>{{ message }}</b></p>{% endif %}</div>
 <div class=card><h2>Current / last run</h2><div id=run><p class=muted>Loading</p></div></div>
 <div class=card><h2>History</h2><div id=history><p class=muted>Loading</p></div></div>

@@ -318,8 +318,9 @@ module "panel" {
   fw_mgmt_ips = concat(sort(values(module.firewall.mgmt_private_ips)),
   flatten([for p in values(var.panel_remote_pairs) : sort([for u in values(p.units) : u.ip])]))
 
-  # Failover tests: the panel may stop/start exactly these two instances (IAM) and run HA
-  # suspend/restore on them (XML API). Probes the GP portal to measure the outage.
+  # Failover tests: the panel may stop/start exactly the firewall instances of the pairs below
+  # (this region's + panel_remote_pairs) and run HA suspend/restore on them (XML API).
+  # The topology reaches the hosts through an SSM parameter, not user_data (modules/panel).
   enable_failover   = var.panel_enable_failover
   ga_arn            = var.panel_ga_arn
   alb_ingress_cidrs = var.panel_alb_ingress_cidrs

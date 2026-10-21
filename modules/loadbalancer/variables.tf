@@ -53,7 +53,11 @@ variable "cloudfront_only" {
 }
 
 variable "cloudfront_origin_ports" {
-  description = "With cloudfront_only: the NLB port(s) CloudFront connects to (the distribution's origin port). Other listeners become unreachable."
+  description = "With cloudfront_only: the NLB port CloudFront connects to (the distribution's origin port). Only this listener is created then. One port only: the CloudFront prefix list weighs ~55 rules per port against the 60-rule security-group quota."
   type        = list(number)
   default     = [80]
+  validation {
+    condition     = length(var.cloudfront_origin_ports) == 1
+    error_message = "cloudfront_origin_ports must hold exactly one port."
+  }
 }

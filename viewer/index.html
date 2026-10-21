@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AWS VM-Series HA — Multi-Region GlobalProtect Architecture Viewer</title>
+  <title>AWS VM-Series HA — Multi-Region GlobalProtect Architecture Viewer (Panorama / Strata Cloud Manager)</title>
   <link rel="stylesheet" href="css/styles.css">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23FA582D'><path d='M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5'/></svg>">
 </head>
@@ -28,7 +28,7 @@
       </div>
       <div class="brand-divider"></div>
       <div class="project-titles">
-        <h1>AWS VM-Series HA + Multi-Region GP <span class="badge-ver">PAN-OS 11.1</span></h1>
+        <h1>AWS VM-Series HA + Multi-Region GP <span class="badge-ver" id="badge-ver">PAN-OS 12.2.4+ · SCM</span></h1>
         <p>Interactive Architecture Viewer &amp; Resilience Simulator</p>
       </div>
     </div>
@@ -61,7 +61,7 @@
 
       <div class="search-box">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" id="search-input" placeholder="Search (e.g. HA2, TGW, EIP, IP)...">
+        <input type="text" id="search-input" placeholder="Search (e.g. HA2, SCM, WAF, EIP)...">
       </div>
       <button class="btn-icon" id="btn-fullscreen" title="Full Screen">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
@@ -82,8 +82,8 @@
       <button class="nav-btn active" data-view="overview" onclick="window.app.setViewPreset('overview')">🌐 Overview</button>
       <button class="nav-btn" data-view="ha-cluster" onclick="window.app.setViewPreset('ha-cluster')">🛡️ HA Cluster (Security)</button>
       <button class="nav-btn" data-view="region-a" onclick="window.app.setViewPreset('region-a')">⚡ Region A (Frankfurt)</button>
-      <button class="nav-btn" data-view="region-b" onclick="window.app.setViewPreset('region-b')">🔄 Region B (Dublin DR)</button>
-      <button class="nav-btn" data-view="mgmt" onclick="window.app.setViewPreset('mgmt')">🔐 Panorama &amp; SSM</button>
+      <button class="nav-btn" data-view="region-b" onclick="window.app.setViewPreset('region-b')">🔄 Region B (Dublin)</button>
+      <button class="nav-btn" data-view="mgmt" onclick="window.app.setViewPreset('mgmt')">🔐 Management</button>
     </div>
 
     <!-- Zoom & Canvas Controls -->

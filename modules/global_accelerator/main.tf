@@ -65,9 +65,10 @@ resource "aws_globalaccelerator_endpoint_group" "this" {
   endpoint_group_region = each.value.region
   health_check_protocol = "TCP"
   health_check_port     = each.value.health_check_port
-  # 10 s is the shortest interval GA allows. One failed check marks an endpoint unhealthy:
-  # with the default 3 a whole-region outage left the portal unreachable for 73 s (measured
-  # with the panel's region test); the price is that a single lost check also fails over.
+  # 10 s is the shortest interval GA allows. health_check_threshold failed checks mark an endpoint
+  # unhealthy (default 1): with 3 a whole-region outage left the portal unreachable for 73 s
+  # (measured with the panel's region test); the price of 1 is that a single lost check also
+  # moves traffic.
   health_check_interval_seconds = 10
   threshold_count               = var.health_check_threshold
 

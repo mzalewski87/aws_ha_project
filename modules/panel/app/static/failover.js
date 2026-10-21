@@ -111,9 +111,12 @@
       // region that serves clients near this panel (Poland -> eu-central-1), the other healthy
       // region as standby (it serves clients nearer to it and takes over on failure).
       var ga = t.ga || {groups: {}};
+      var noGa = !t.ga;
+      // A region whose active firewall is down is not serving, whatever GA still reports during
+      // its detection lag (plus the panel's 15 s cache of the GA API).
       var gaHealthy = function (key) {
         var g = ga.groups[t.pairs[key].region];
-        return g ? g.health === 'HEALTHY' : regionUp[key];
+        return regionUp[key] && (g ? g.health === 'HEALTHY' : true);
       };
       var home = keys.filter(function (k) { return t.pairs[k].region === ga.home && gaHealthy(k); })[0] ||
                  keys.filter(gaHealthy)[0];
@@ -123,10 +126,11 @@
         svg.appendChild(s('path', {d: 'M285,' + midY + ' C292,' + midY + ' 292,' + (eipY + 35) + ' 300,' + (eipY + 35),
           'class': 'edge ' + cls}));
         var g = ga.groups[t.pairs[key].region];
-        svg.appendChild(s('text', {x: 300, y: TOP + r * ROW + 50, 'class': 'small'}, 'GA: ' + (g ? g.health : 'n/a')));
+        svg.appendChild(s('text', {x: 300, y: TOP + r * ROW + 50, 'class': 'small'},
+          noGa ? 'no Global Accelerator' : ('GA: ' + (g ? g.health : 'n/a') + (regionUp[key] ? '' : ' (firewalls down)'))));
         svg.appendChild(s('text', {x: 300, y: TOP + r * ROW + 66, 'class': 'small'},
-          key === home ? (t.pairs[key].region === ga.home ? 'serving (nearest)' : 'serving (failover)')
-                       : (gaHealthy(key) ? 'standby' : 'not serving')));
+          !gaHealthy(key) ? 'not serving'
+            : (key === home ? (noGa || t.pairs[key].region === ga.home ? 'serving (nearest)' : 'serving (failover)') : 'standby')));
       });
       svg.appendChild(s('path', {d: 'M150,' + midY + ' L165,' + midY, 'class': 'edge ' + (t.gp_up === false ? 'bad' : 'live')}));
       box(svg, 165, midY - 55, 120, 110, gpCls, [['Global', ''], ['Accelerator', ''], ['nearest healthy', 'small'], ['region wins', 'small']]);

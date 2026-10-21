@@ -92,6 +92,18 @@ resource "aws_wafv2_web_acl" "this" {
         managed_rule_group_statement {
           vendor_name = "AWS"
           name        = rule.key
+          # HostingProviderIPList blocks cloud provider ranges — including the firewalls' own EIP,
+          # through which GlobalProtect full-tunnel users and the lab's own hosts reach the
+          # internet. Count it (visible in metrics) instead of blocking.
+          dynamic "rule_action_override" {
+            for_each = rule.key == "AWSManagedRulesAnonymousIpList" ? ["HostingProviderIPList"] : []
+            content {
+              name = rule_action_override.value
+              action_to_use {
+                count {}
+              }
+            }
+          }
         }
       }
       visibility_config {
