@@ -11,3 +11,8 @@ output "accelerator_static_ips" {
   description = "The 2 static anycast IPs (the client keeps these forever)."
   value       = aws_globalaccelerator_accelerator.this.ip_sets
 }
+
+output "accelerator_arn" {
+  description = "GA ARN (the panel reads endpoint health with it)."
+  value       = aws_globalaccelerator_accelerator.this.id
+}

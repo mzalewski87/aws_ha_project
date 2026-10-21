@@ -105,6 +105,9 @@ module "region_a" {
   create_panel            = local.panel_on
   panel_enable_failover   = var.panel_enable_failover
   panel_alb_ingress_cidrs = var.panel_alb_ingress_cidrs
+  panel_ga_arn            = var.enable_global_accelerator ? module.global_accelerator[0].accelerator_arn : ""
+  app_nlb_cloudfront_only = var.app_nlb_cloudfront_only
+  app_web_acl_id          = local.web_waf_on ? module.website_waf[0].arn : ""
   # Region B's pair in the panel (topology + failover/region tests). Plain values only, so
   # no module-level dependency on region_b is created.
   panel_remote_pairs = var.enable_region_b ? {

@@ -45,3 +45,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "cloudfront_only" {
+  description = "Give the NLB a security group that admits only CloudFront's origin-facing ranges. Enabling it on an existing NLB replaces the NLB."
+  type        = bool
+  default     = false
+}

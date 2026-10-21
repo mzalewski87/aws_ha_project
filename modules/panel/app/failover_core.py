@@ -355,8 +355,8 @@ def region_outage(ctx):
     _undo_on_abort(ctx, go, lambda: [ctx.ec2.start(u) for u in ctx.units])
     ctx.job.mark("region down")
     ctx.job.enter("observe")
-    ctx.job.log("observing the portal for 60s: it should now be answered by the other region")
-    ctx.sleep(60)
+    ctx.job.log("observing the portal for 30s: it should now be answered by the other region")
+    ctx.sleep(30)
     ctx.job.enter("start the region")
     ctx.job.mark("EC2 start " + " + ".join(ctx.units))
     for u in ctx.units:
@@ -408,17 +408,20 @@ def recover(ctx):
 
 RESTORE = "failback to preferred primary"
 # key -> (label, function, phases, typical duration in seconds, takes the restore option)
+# Typical durations = measured live + 30 %, shown rounded DOWN to whole minutes:
+#   soft 47 s -> 1 min; hard 426 s + ~30 s failback = 456 s -> 593 s -> 9 min;
+#   region 510 s with a 60 s observation, i.e. 480 s with 30 s -> 624 s -> 10 min.
 SCENARIOS = {
     "sync": ("Check and repair configuration sync", sync_check,
-             ["pre-checks", "check and repair sync"], 10, False),
+             ["pre-checks", "check and repair sync"], 60, False),
     "soft": ("HA failover: suspend the active firewall, then restore it", soft_failover,
-             ["pre-checks", "trigger failover", "takeover", "observe", "restore failed unit", RESTORE], 90, True),
+             ["pre-checks", "trigger failover", "takeover", "observe", "restore failed unit", RESTORE], 61, True),
     "hard": ("Hard failover: stop the active firewall's EC2 instance, then start it", hard_failover,
              ["pre-checks", "stop active instance", "takeover", "observe", "start instance",
-              "boot and rejoin HA", RESTORE], 540, True),
+              "boot and rejoin HA", RESTORE], 593, True),
     "region": ("Region outage: stop BOTH firewalls of the region, then bring them back", region_outage,
                ["pre-checks", "stop the region", "observe", "start the region", "boot and rejoin HA", RESTORE],
-               720, True),
+               624, True),
     "rebalance": ("Align the pair: make the preferred primary active again", rebalance,
                   ["pre-checks", RESTORE], 60, False),
     "recover": ("Recover: start stopped firewalls, clear suspended state", recover,

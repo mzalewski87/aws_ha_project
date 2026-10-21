@@ -306,3 +306,20 @@ variable "panel_remote_pairs" {
   }))
   default = {}
 }
+
+variable "panel_ga_arn" {
+  description = "Global Accelerator ARN for the panel's topology view (empty = none)."
+  type        = string
+  default     = ""
+}
+
+variable "app_nlb_cloudfront_only" {
+  description = "Restrict the app NLB to CloudFront's origin-facing ranges (replaces an existing NLB when turned on)."
+  type        = bool
+  default     = false
+}
+variable "app_web_acl_id" {
+  description = "CLOUDFRONT-scope WAF web ACL ARN for the app distribution (empty = none)."
+  type        = string
+  default     = ""
+}

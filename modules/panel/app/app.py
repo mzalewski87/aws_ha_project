@@ -35,6 +35,7 @@ CFG = {
     "topo": json.loads(base64.b64decode(os.environ.get("PANEL_TOPO_B64", "") or "e30=").decode()),
     "failover_enabled": os.environ.get("PANEL_FAILOVER_ENABLED", "0") == "1",
     "runs_table": os.environ.get("PANEL_RUNS_TABLE", ""),
+    "ga_arn": os.environ.get("PANEL_GA_ARN", ""),   # Global Accelerator in front of the portal
     "operator_group": os.environ.get("PANEL_OPERATOR_GROUP", "panel-operators"),
     "gp_fqdn": os.environ.get("PANEL_GP_FQDN", ""),
     "region": os.environ.get("AWS_DEFAULT_REGION", ""),
@@ -657,6 +658,35 @@ def start_job(scenario, user, ip, restore, run_id=None, pair=None):
     return job
 
 
+_ga_cache = {"ts": 0.0, "data": None}
+
+
+def ga_state():
+    """Endpoint health per region of the portal's TCP 443 listener (cached 15 s; the GA API
+    lives in us-west-2 and needs no polling every 2 s)."""
+    if not CFG["ga_arn"]:
+        return None
+    if time.time() - _ga_cache["ts"] < 15 and _ga_cache["data"] is not None:
+        return _ga_cache["data"]
+    data = {"home": CFG["region"], "groups": {}, "error": None}
+    try:
+        ga = aws_client("globalaccelerator", "us-west-2")
+        listeners = ga.list_listeners(AcceleratorArn=CFG["ga_arn"])["Listeners"]
+        for lst in listeners:
+            if not any(r["FromPort"] <= 443 <= r["ToPort"] for r in lst["PortRanges"]):
+                continue
+            for g in ga.list_endpoint_groups(ListenerArn=lst["ListenerArn"])["EndpointGroups"]:
+                health = [e.get("HealthState", "UNKNOWN") for e in g.get("EndpointDescriptions", [])]
+                data["groups"][g["EndpointGroupRegion"]] = {
+                    "health": "HEALTHY" if health and all(h == "HEALTHY" for h in health) else (health[0] if health else "UNKNOWN"),
+                    "dial": g.get("TrafficDialPercentage", 100)}
+    except Exception as exc:
+        print(json.dumps({"event": "ga_error", "error": f"{type(exc).__name__}: {exc}"[:300]}), flush=True)
+        data["error"] = f"Global Accelerator lookup failed ({type(exc).__name__})."
+    _ga_cache.update(ts=time.time(), data=data)
+    return data
+
+
 class Topology:
     """Live picture of the pair: HA roles, EC2 state, who holds the public EIP, who gets the routes.
 
@@ -729,6 +759,9 @@ class Topology:
             out["gp_up"] = not RUN["probe"].summary()["down_now"]
         elif CFG["gp_fqdn"]:
             out["gp_up"] = gp_check()
+        out["ga"] = ga_state()
+        if out["ga"] and out["ga"].get("error"):
+            errors.append(out["ga"]["error"])
         out["errors"] = errors
         return out
 
@@ -828,7 +861,7 @@ and the inspection routes point). Green = carries traffic.</p>
 <p><b>Region / pair:</b> {% for p in meta.pairs %}<label class=scen-inline><input type=radio name=pair value="{{ p.key }}" {{ 'checked' if loop.first }}>
 {{ p.label }} <span class=muted>({{ p.region }})</span></label> {% endfor %}</p>
 <p>{% for key, item in meta.scenarios.items() %}{% if key != 'region' or meta.pairs|length > 1 %}<label class=scen><input type=radio name=scenario value="{{ key }}" {{ 'checked' if loop.first }}>
-{{ item.label }} <span class=muted>(about {{ (item.typical/60)|round(0, 'ceil')|int }} min)</span></label>{% endif %}{% endfor %}</p>
+{{ item.label }} <span class=muted>(about {{ [item.typical // 60, 1]|max|int }} min)</span></label>{% endif %}{% endfor %}</p>
 <p><label><input type=checkbox name=restore value=1 checked id=restore> After the test, fail back so the preferred
 primary is active again (one more short switchover, measured too)</label></p>
 <p><label>Type <code>FAILOVER</code> to confirm <input name=confirm autocomplete=off size=12></label>

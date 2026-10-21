@@ -30,6 +30,7 @@ svg.diagram { width: 100%; height: auto; display: block; margin: .5rem 0; }
 .diagram .edge { stroke: var(--idle); stroke-width: 2; fill: none; stroke-dasharray: 4 6; }
 .diagram .edge.live { stroke: var(--live); stroke-width: 4; stroke-dasharray: 10 8; animation: flow 1s linear infinite; }
 .diagram .edge.bad { stroke: var(--bad); stroke-width: 3; stroke-dasharray: 2 6; }
+.diagram .edge.standby { stroke: var(--info); stroke-width: 2.5; stroke-dasharray: 3 7; }
 .diagram .edge.ok { stroke: var(--live); stroke-width: 2; stroke-dasharray: none; }
 @keyframes flow { to { stroke-dashoffset: -18; } }
 @media (prefers-reduced-motion: reduce) { .diagram .edge.live { animation: none; } .rules li, .bar > div { transition: none; } }

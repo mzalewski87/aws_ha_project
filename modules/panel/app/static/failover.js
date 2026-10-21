@@ -59,16 +59,19 @@
       var routeCount = {};
       (p.routes || []).forEach(function (rt) { routeCount[rt.unit] = (routeCount[rt.unit] || 0) + 1; });
       var routeUnit = names.filter(function (n) { return routeCount[n]; })[0];
-      var active = names.filter(function (n) { return stateClass(p.units[n]) === 'live'; })[0];
-      regionUp[key] = !!(active && p.eip_holder === active);
+      var isUp = function (n) { return !!n && stateClass(p.units[n]) === 'live'; };
+      var active = names.filter(isUp)[0];
+      // AWS keeps pointing the EIP and the routes at a unit that is stopped; that is not traffic.
+      var eipUp = isUp(p.eip_holder), routeUp = isUp(routeUnit);
+      regionUp[key] = !!(active && eipUp);
       var eipY = oy + 120;
 
       names.forEach(function (n) {
         var q = pos[n];
         svg.appendChild(s('path', {d: 'M430,' + (eipY + 35) + ' C445,' + (eipY + 35) + ' 440,' + (q.y + 60) + ' 455,' + (q.y + 60),
-          'class': 'edge ' + (p.eip_holder === n ? 'live' : '')}));
+          'class': 'edge ' + (p.eip_holder === n ? (isUp(n) ? 'live' : 'bad') : '')}));
         svg.appendChild(s('path', {d: 'M670,' + (q.y + 60) + ' C690,' + (q.y + 60) + ' 690,' + (eipY + 40) + ' 720,' + (eipY + 40),
-          'class': 'edge ' + (routeUnit === n ? 'live' : '')}));
+          'class': 'edge ' + (routeUnit === n ? (isUp(n) ? 'live' : 'bad') : '')}));
       });
       if (names.length === 2) {
         var a = p.units[names[0]], b = p.units[names[1]];
@@ -79,8 +82,9 @@
       }
       svg.appendChild(s('text', {x: 300, y: oy + 14, 'class': 'big'}, p.label));
       svg.appendChild(s('text', {x: 300, y: oy + 32, 'class': 'small'}, p.region));
-      box(svg, 300, eipY, 130, 70, p.eip_holder ? 'live' : 'bad',
-        [['Public EIP', ''], [p.public_ip || '', 'small'], [p.eip_holder ? ('\u2192 ' + p.eip_holder) : 'not attached', 'small']]);
+      box(svg, 300, eipY, 130, 70, eipUp ? 'live' : 'bad',
+        [['Public EIP', ''], [p.public_ip || '', 'small'],
+         [p.eip_holder ? ('\u2192 ' + p.eip_holder + (eipUp ? '' : ' (down)')) : 'not attached', 'small']]);
       names.forEach(function (n) {
         var u = p.units[n], q = pos[n];
         var pref = names.slice().sort(function (x, y) {
@@ -94,21 +98,38 @@
           [(p.eip_holder === n ? 'holds the EIP' : '') + (routeCount[n] ? ((p.eip_holder === n ? ' \u00b7 ' : '') + routeCount[n] + ' route(s)') : ''), 'small']
         ]);
       });
-      box(svg, 720, eipY, 230, 80, routeUnit ? 'live' : '',
+      box(svg, 720, eipY, 230, 80, routeUp ? 'live' : 'bad',
         [['Transit Gateway', ''], ['spokes: DC, apps, GP pool', 'small'],
-         [routeUnit ? ('inspection via ' + routeUnit) : 'no route to a firewall', 'small']]);
+         [routeUnit ? ((routeUp ? 'inspection via ' : 'routes point at DOWN ') + routeUnit) : 'no route to a firewall', 'small']]);
     });
 
     // client side: clients -> (Global Accelerator) -> each region's EIP
     var gpCls = t.gp_up === false ? 'bad' : (t.gp_up ? 'live' : '');
     if (multi) {
+      // Global Accelerator does NOT split traffic and has no priority: with both endpoint groups
+      // at 100 % traffic dial each client goes to the NEAREST HEALTHY region. Shown here: the
+      // region that serves clients near this panel (Poland -> eu-central-1), the other healthy
+      // region as standby (it serves clients nearer to it and takes over on failure).
+      var ga = t.ga || {groups: {}};
+      var gaHealthy = function (key) {
+        var g = ga.groups[t.pairs[key].region];
+        return g ? g.health === 'HEALTHY' : regionUp[key];
+      };
+      var home = keys.filter(function (k) { return t.pairs[k].region === ga.home && gaHealthy(k); })[0] ||
+                 keys.filter(gaHealthy)[0];
       keys.forEach(function (key, r) {
         var eipY = TOP + r * ROW + 120;
+        var cls = !gaHealthy(key) ? 'bad' : (key === home ? 'live' : 'standby');
         svg.appendChild(s('path', {d: 'M285,' + midY + ' C292,' + midY + ' 292,' + (eipY + 35) + ' 300,' + (eipY + 35),
-          'class': 'edge ' + (regionUp[key] ? 'live' : 'bad')}));
+          'class': 'edge ' + cls}));
+        var g = ga.groups[t.pairs[key].region];
+        svg.appendChild(s('text', {x: 300, y: TOP + r * ROW + 50, 'class': 'small'}, 'GA: ' + (g ? g.health : 'n/a')));
+        svg.appendChild(s('text', {x: 300, y: TOP + r * ROW + 66, 'class': 'small'},
+          key === home ? (t.pairs[key].region === ga.home ? 'serving (nearest)' : 'serving (failover)')
+                       : (gaHealthy(key) ? 'standby' : 'not serving')));
       });
       svg.appendChild(s('path', {d: 'M150,' + midY + ' L165,' + midY, 'class': 'edge ' + (t.gp_up === false ? 'bad' : 'live')}));
-      box(svg, 165, midY - 45, 120, 90, gpCls, [['Global', ''], ['Accelerator', ''], ['anycast', 'small']]);
+      box(svg, 165, midY - 55, 120, 110, gpCls, [['Global', ''], ['Accelerator', ''], ['nearest healthy', 'small'], ['region wins', 'small']]);
     } else if (keys.length) {
       var y1 = TOP + 120 + 35;
       svg.appendChild(s('path', {d: 'M150,' + midY + ' C220,' + midY + ' 220,' + y1 + ' 300,' + y1, 'class': 'edge ' + (t.gp_up === false ? 'bad' : 'live')}));
@@ -155,7 +176,7 @@
     head.appendChild(h('b', {}, sc.label + ((j.options && j.options.pair_label) ? (' \u2014 ' + j.options.pair_label) : '') + ' '));
     head.appendChild(h('span', {'class': 'badge ' + j.status}, j.status));
     head.appendChild(h('span', {'class': 'muted'}, '  started ' + clock(j.started) + ' by ' + j.user +
-      ', ' + j.elapsed + 's' + (j.status === 'running' ? (' (typically ' + Math.round(sc.typical / 60) + ' min)') : '')));
+      ', ' + j.elapsed + 's' + (j.status === 'running' ? (' (typically ' + Math.max(1, Math.floor(sc.typical / 60)) + ' min)') : '')));
     box.appendChild(head);
 
     var phases = j.phases || [];

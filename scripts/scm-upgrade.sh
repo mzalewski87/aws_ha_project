@@ -45,17 +45,34 @@ unhealthy="$(scm_api GET "/config/setup/v1/devices?limit=500" | jq -r --arg f "$
 scm_api GET "/config/setup/v1/devices?limit=500" | jq -r --arg f "$FOLDER" \
   '(.data // [])[] | select(.folder == $f) | "  \(.name)  sw=\(.software_version)  ha=\(.ha_state)"' >&2
 
-# Reuse an existing rule of the same name instead of failing on a re-run.
+# Devices of the folder that already run the target version are EXCLUDED (match_criteria
+# field `exclude_devices`, a list of serials — found by probing: it is the field the API stores;
+# `devices.exclude` and `serial_numbers.exclude` are accepted but silently dropped). Without it,
+# upgrading a second region's pair would also hit the pair that is already up to date.
+devs_all="$(scm_api GET "/config/setup/v1/devices?limit=500")"
+excl="$(jq -c --arg f "$FOLDER" --arg v "$VERSION" '[(.data // [])[] | select(.folder == $f)
+         | select(.software_version as $s | $s == $v or ($s | startswith($v + "-"))) | .name]' <<<"$devs_all")"
+todo="$(jq -r --arg f "$FOLDER" --arg v "$VERSION" '[(.data // [])[] | select(.folder == $f)
+         | select((.software_version as $s | $s == $v or ($s | startswith($v + "-"))) | not) | .name] | join(",")' <<<"$devs_all")"
+[ -n "$todo" ] || { scm_log "every firewall in '$FOLDER' already runs $VERSION — nothing to do"; exit 0; }
+scm_log "to upgrade: $todo; excluded (already on $VERSION): $(jq -r 'join(",")' <<<"$excl")"
+rule="$(jq -nc --arg n "$NAME" --arg f "$FOLDER" --argjson x "$excl" \
+  '{name:$n, description:"managed by scm-upgrade.sh", enabled:true,
+    match_criteria:({ folders:{include:[$f]} } + (if ($x | length) > 0 then {exclude_devices:$x} else {} end))}')"
+# Reuse (and update) an existing rule of the same name instead of failing on a re-run.
 rule_id="$(scm_api GET "$BASE/software-upgrade-rules?name=$(scm_urlenc "$NAME")" \
   | jq -r --arg n "$NAME" '(if type=="array" then . else (.data // []) end) | map(select(.name == $n)) | first | .id // empty')"
 if [ -z "$rule_id" ]; then
-  rule="$(jq -nc --arg n "$NAME" --arg f "$FOLDER" \
-    '{name:$n, description:"managed by scm-upgrade.sh", enabled:true,
-      match_criteria:{ folders:{include:[$f]} }}')"
   scm_api POST "$BASE/software-upgrade-rules" "$rule" >/dev/null
   scm_log "created upgrade rule $NAME"
 else
-  scm_log "reusing upgrade rule $NAME"
+  scm_api PUT "$BASE/software-upgrade-rules/$rule_id" "$rule" >/dev/null \
+    || scm_die "could not update upgrade rule $NAME ($rule_id)"
+  stored="$(scm_api GET "$BASE/software-upgrade-rules?name=$(scm_urlenc "$NAME")" \
+    | jq -c --arg n "$NAME" '(if type=="array" then . else (.data // []) end) | map(select(.name == $n)) | first | .match_criteria')"
+  [ "$(jq -c '.exclude_devices // []' <<<"$stored")" = "$excl" ] \
+    || scm_die "rule $NAME did not keep the exclusion list (stored: $stored) — refusing to upgrade units that are already on $VERSION"
+  scm_log "updated upgrade rule $NAME: $stored"
 fi
 
 # What the live API actually wants (found by probing with disabled schedules; the OpenAPI is

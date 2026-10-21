@@ -45,3 +45,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "health_check_threshold" {
+  description = "Consecutive failed (or passed) health checks before an endpoint changes state (1-10). 1 = fastest region failover."
+  type        = number
+  default     = 1
+}

@@ -30,6 +30,7 @@ PANEL_SPOKE_HOST=${spoke_host}
 PANEL_TOPO_B64=${topo_b64}
 PANEL_FAILOVER_ENABLED=${failover_enabled}
 PANEL_RUNS_TABLE=${runs_table}
+PANEL_GA_ARN=${ga_arn}
 PANEL_OPERATOR_GROUP=${operator_group}
 PANEL_GP_FQDN=${gp_fqdn}
 AWS_DEFAULT_REGION=${region}

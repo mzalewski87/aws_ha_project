@@ -15,3 +15,7 @@ output "secret_arn" {
   description = "Secrets Manager secret with the panel's session key and the read-only firewall admin password."
   value       = aws_secretsmanager_secret.panel.arn
 }
+output "alb_arn" {
+  description = "Panel ALB ARN (the WAF web ACL is attached to it)."
+  value       = aws_lb.this.arn
+}

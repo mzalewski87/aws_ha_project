@@ -321,6 +321,7 @@ module "panel" {
   # Failover tests: the panel may stop/start exactly these two instances (IAM) and run HA
   # suspend/restore on them (XML API). Probes the GP portal to measure the outage.
   enable_failover   = var.panel_enable_failover
+  ga_arn            = var.panel_ga_arn
   alb_ingress_cidrs = var.panel_alb_ingress_cidrs
   pairs = merge({
     a = {
@@ -412,6 +413,7 @@ module "loadbalancer" {
   # target only goes healthy when Apache is actually reachable end-to-end.
   target_ips        = [module.firewall.floating_ip]
   health_check_port = 80
+  cloudfront_only   = var.app_nlb_cloudfront_only
 
   tags = var.tags
 }
@@ -423,6 +425,7 @@ module "cloudfront" {
   origin_domain_name  = module.loadbalancer[0].nlb_dns_name
   aliases             = var.app_aliases
   acm_certificate_arn = var.app_acm_certificate_arn
+  web_acl_id          = var.app_web_acl_id
   tags                = var.tags
 }
 

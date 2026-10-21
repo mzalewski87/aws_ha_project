@@ -177,3 +177,8 @@ output "mgmt_panel_route_table_ids" {
   value       = local.create_panel ? module.vpc_mgmt.route_table_ids_by_role["panel"] : []
   description = "Panel subnet route tables (per AZ) — need a route to a remote region's firewall mgmt."
 }
+
+output "panel_alb_arn" {
+  value       = local.create_panel ? module.panel[0].alb_arn : null
+  description = "Admin panel ALB ARN (WAF association)."
+}

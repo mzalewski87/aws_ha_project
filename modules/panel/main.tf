@@ -165,6 +165,12 @@ resource "aws_iam_role_policy" "topology" {
         Resource = "*"
       },
       {
+        # Read-only: which region's portal Global Accelerator considers healthy.
+        Effect   = "Allow"
+        Action   = ["globalaccelerator:ListListeners", "globalaccelerator:ListEndpointGroups", "globalaccelerator:DescribeAccelerator"]
+        Resource = "*"
+      },
+      {
         Effect   = "Allow"
         Action   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Scan", "dynamodb:UpdateItem", "dynamodb:DeleteItem"]
         Resource = aws_dynamodb_table.runs.arn
@@ -272,6 +278,7 @@ resource "aws_instance" "panel" {
     topo_b64         = base64encode(jsonencode({ pairs = var.pairs }))
     failover_enabled = var.enable_failover ? "1" : "0"
     runs_table       = aws_dynamodb_table.runs.name
+    ga_arn           = var.ga_arn
     operator_group   = var.operator_group
     gp_fqdn          = var.gp_portal_fqdn
     app_secret_id    = aws_secretsmanager_secret.app.id

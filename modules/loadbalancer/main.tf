@@ -12,12 +12,48 @@ terraform {
   }
 }
 
+# CloudFront is the only intended client of this NLB. With cloudfront_only the NLB gets a
+# security group that admits only CloudFront's origin-facing ranges (AWS-managed prefix list),
+# so the app cannot be reached around CloudFront (and its WAF). NLB security groups can only be
+# set when the NLB is created: turning this on replaces the NLB (CloudFront follows the new name).
+data "aws_ec2_managed_prefix_list" "cloudfront" {
+  count = var.cloudfront_only ? 1 : 0
+  name  = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+resource "aws_security_group" "nlb" {
+  count       = var.cloudfront_only ? 1 : 0
+  name        = "${var.name_prefix}-app-nlb"
+  description = "App NLB: listener ports from CloudFront origin-facing ranges only"
+  vpc_id      = var.vpc_id
+  tags        = merge(var.tags, { Name = "${var.name_prefix}-app-nlb" })
+
+  dynamic "ingress" {
+    for_each = toset([for p in var.listeners : tostring(p)])
+    content {
+      description     = "CloudFront origin-facing"
+      from_port       = tonumber(ingress.value)
+      to_port         = tonumber(ingress.value)
+      protocol        = "tcp"
+      prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront[0].id]
+    }
+  }
+  egress {
+    description = "To the firewall targets and health checks"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 resource "aws_lb" "app" {
   name                             = "${var.name_prefix}-app-nlb"
   load_balancer_type               = "network"
   internal                         = false
   subnets                          = var.subnet_ids
   enable_cross_zone_load_balancing = true
+  security_groups                  = var.cloudfront_only ? [aws_security_group.nlb[0].id] : null
   tags                             = merge(var.tags, { Name = "${var.name_prefix}-app-nlb" })
 }
 

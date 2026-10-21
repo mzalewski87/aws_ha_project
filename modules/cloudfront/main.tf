@@ -23,6 +23,9 @@ resource "aws_cloudfront_distribution" "app" {
   # distribution outright if an alias has no certificate covering it.
   aliases = var.acm_certificate_arn == "" ? [] : var.aliases
 
+  # AWS WAF (CLOUDFRONT scope, created in us-east-1 by the root); empty = none.
+  web_acl_id = var.web_acl_id == "" ? null : var.web_acl_id
+
   origin {
     origin_id   = "app-nlb"
     domain_name = var.origin_domain_name

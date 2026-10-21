@@ -428,3 +428,34 @@ variable "panel_alb_ingress_cidrs" {
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
+
+# --- AWS WAF on the public web endpoints (panel ALB, website CloudFront) -------
+variable "enable_waf" {
+  description = "Put AWS WAF (managed rule groups + rate limit + optional geo allow-list) in front of the admin panel ALB and the website CloudFront distribution."
+  type        = bool
+  default     = true
+}
+
+variable "waf_allowed_countries" {
+  description = "ISO 3166-1 alpha-2 country codes allowed through WAF, e.g. [\"PL\"]. Empty (default) = no geo restriction. Careful: a code that does not include YOUR location locks you out of the panel."
+  type        = list(string)
+  default     = []
+}
+
+variable "waf_panel_rate_limit" {
+  description = "Panel: max requests per source IP per 5 minutes (the failover page polls every 2-6 s, ~150 requests / 5 min per open tab)."
+  type        = number
+  default     = 1000
+}
+
+variable "waf_website_rate_limit" {
+  description = "Website: max requests per source IP per 5 minutes."
+  type        = number
+  default     = 2000
+}
+
+variable "app_nlb_cloudfront_only" {
+  description = "Restrict the app NLB to CloudFront's origin-facing ranges, so the website cannot be reached around CloudFront/WAF. Turning it on for an existing deployment replaces the NLB (CloudFront follows automatically)."
+  type        = bool
+  default     = true
+}

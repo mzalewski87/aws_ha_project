@@ -91,3 +91,8 @@ variable "gp_portal_fqdn" {
   type        = string
   default     = ""
 }
+variable "ga_arn" {
+  description = "Global Accelerator ARN in front of the portal (topology: endpoint health per region). Empty = no GA."
+  type        = string
+  default     = ""
+}
