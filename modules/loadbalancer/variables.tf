@@ -51,3 +51,9 @@ variable "cloudfront_only" {
   type        = bool
   default     = false
 }
+
+variable "cloudfront_origin_ports" {
+  description = "With cloudfront_only: the NLB port(s) CloudFront connects to (the distribution's origin port). Other listeners become unreachable."
+  type        = list(number)
+  default     = [80]
+}

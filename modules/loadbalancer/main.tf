@@ -24,12 +24,14 @@ data "aws_ec2_managed_prefix_list" "cloudfront" {
 resource "aws_security_group" "nlb" {
   count       = var.cloudfront_only ? 1 : 0
   name        = "${var.name_prefix}-app-nlb"
-  description = "App NLB: listener ports from CloudFront origin-facing ranges only"
+  description = "App NLB: CloudFront origin-facing ranges on the origin port only"
   vpc_id      = var.vpc_id
   tags        = merge(var.tags, { Name = "${var.name_prefix}-app-nlb" })
 
+  # Only the port(s) CloudFront actually uses towards this origin: the managed prefix list counts
+  # as ~55 rules per port against the 60-rule SG limit, so one rule per listener does not fit.
   dynamic "ingress" {
-    for_each = toset([for p in var.listeners : tostring(p)])
+    for_each = toset([for p in var.cloudfront_origin_ports : tostring(p)])
     content {
       description     = "CloudFront origin-facing"
       from_port       = tonumber(ingress.value)

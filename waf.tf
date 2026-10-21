@@ -32,7 +32,7 @@ module "website_waf" {
   providers = { aws = aws.us_east_1 }
 
   name              = "${var.name_prefix}-website"
-  description       = "Test website (CloudFront)"
+  description       = "Test website on CloudFront"
   scope             = "CLOUDFRONT"
   allowed_countries = var.waf_allowed_countries
   rate_limit        = var.waf_website_rate_limit
