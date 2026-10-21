@@ -38,7 +38,7 @@ variable "domain_name" {
   type        = string
 }
 variable "admin_group" {
-  description = "AD group whose members may sign in."
+  description = "AD group whose members may sign in read-only (viewer). Members of operator_group sign in without it."
   type        = string
   default     = "panel-admins"
 }
@@ -82,7 +82,7 @@ variable "pairs" {
   default = {}
 }
 variable "operator_group" {
-  description = "AD group whose members (who must also be in admin_group) may run failover tests."
+  description = "AD group whose members may sign in and run failover tests (admin_group membership not needed)."
   type        = string
   default     = "panel-operators"
 }

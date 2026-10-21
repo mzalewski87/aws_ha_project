@@ -40,3 +40,6 @@ docs/reference/pdfs/*.pdf
 CLAUDE.md
 NEXT-SESSION-PROMPT.md
 docs/aws-research-briefing.md
+
+# Python bytecode (panel unit tests)
+__pycache__/

@@ -121,6 +121,25 @@ class Rules(unittest.TestCase):
         self.assertEqual(m.parse_ha(xml)["priority"], "100")
 
 
+class Roles(unittest.TestCase):
+    ADM = "cn=panel-admins,cn=users,dc=panw,dc=labs"
+    OPS = "cn=panel-operators,cn=users,dc=panw,dc=labs"
+
+    def role(self, *groups):
+        return m.role_for_groups(list(groups), self.ADM, self.OPS)
+
+    def test_operator_group_alone_signs_in_as_operator(self):
+        self.assertEqual(self.role(self.OPS, "cn=vpnusers,cn=users,dc=panw,dc=labs"), "operator")
+
+    def test_both_groups_is_operator_admin_only_is_viewer(self):
+        self.assertEqual(self.role(self.ADM, self.OPS), "operator")
+        self.assertEqual(self.role(self.ADM), "viewer")
+
+    def test_no_panel_group_or_same_cn_elsewhere_is_refused(self):
+        self.assertIsNone(self.role())
+        self.assertIsNone(self.role("cn=panel-operators,ou=other,dc=panw,dc=labs"))
+
+
 class Limiter(unittest.TestCase):
     def test_blocks_forgets_resets(self):
         now = [0.0]

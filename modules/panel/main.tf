@@ -2,7 +2,7 @@
 # modules/panel — lab admin panel (read-only), redundant across AZs
 #
 #   internet -> ALB :443 (ACM) -> panel host :8080 (one per AZ; gunicorn + Flask)
-#                                   |-> LDAP :389 -> DC (AD login, group panel-admins)
+#                                   |-> LDAP :389 -> DC (AD login, panel-admins / panel-operators)
 #                                   '-> HTTPS :443 -> firewall mgmt IPs (read-only admin)
 #
 # Lives in the management VPC, i.e. OUTSIDE the firewall data path it reports on:

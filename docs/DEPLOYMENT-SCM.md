@@ -267,7 +267,7 @@ ends OK.
 
 ```bash
 # Rule panel-ldap-to-dc is created by B4 with the default panel_source_cidrs.
-# AD groups: panel-admins (sign in) + panel-operators (failover tests). AD accounts only.
+# AD groups: panel-admins (viewer) / panel-operators (operator: failover tests; signs in alone). AD accounts only.
 AWS_REGION=<region> DC_INSTANCE_ID=$(terraform output -raw dc_instance_id) \
   PANEL_USERS="admin" PANEL_OPERATORS="admin" bash scripts/panel-setup.sh ad
 
@@ -695,8 +695,9 @@ signatures **cannot be triggered on demand**, and PANW documents no test method.
 A web console on its own ALB (`https://panel.<zone>/`), with two hosts in two AZs of the mgmt VPC.
 It sits outside the firewall path it reports on, so it stays up through firewall and AZ failures.
 
-**Login.** NTLM bind to the DC plus membership of `panel-admins` (viewer) or also
-`panel-operators` (operator). Groups are matched by DN (`CN=...,CN=Users,<base>`).
+**Login.** NTLM bind to the DC plus membership of `panel-admins` (viewer) or
+`panel-operators` (operator; this group alone is enough, no need to be in `panel-admins`
+too). Groups are matched by DN (`CN=...,CN=Users,<base>`).
 - Sessions use secure, HttpOnly, SameSite=Strict cookies, with an absolute 8 h lifetime.
 - Forms carry CSRF tokens.
 - Login is rate-limited per client IP and per user.

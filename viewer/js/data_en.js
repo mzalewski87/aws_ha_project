@@ -898,7 +898,7 @@ const ARCHITECTURE_DATA_EN = {
         },
         {
           title: "AD Login Through the Firewalls",
-          text: "NTLM bind to the DC (rule panel-ldap-to-dc); membership of panel-admins gives viewer, panel-operators operator rights.",
+          text: "NTLM bind to the DC (rule panel-ldap-to-dc); membership of panel-admins gives viewer, panel-operators operator rights (either group signs in).",
           nodes: ["admin-panel", "tgw-a", "fw-pair-a", "tgw-a", "dc-a"]
         },
         {

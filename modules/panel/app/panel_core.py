@@ -253,6 +253,17 @@ def parse_edl_sample(text: str, limit: int = 5) -> dict:
     return {"total": int(legacy.group(1)) if legacy else None, "sample": ips[:limit]}
 
 
+def role_for_groups(groups, admin_dn: str, operator_dn: str):
+    """Panel role for an account's memberOf DNs (all lower-case): "operator", "viewer" or None.
+
+    Membership is matched by full DN. Either group grants sign-in; the operator group alone is
+    enough (requiring the admin group as well locked out operators who were never added to it).
+    """
+    if operator_dn in groups:
+        return "operator"
+    return "viewer" if admin_dn in groups else None
+
+
 class RateLimiter:
     """At most `limit` failed attempts per key inside `window` seconds."""
 
