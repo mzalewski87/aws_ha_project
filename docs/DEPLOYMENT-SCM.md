@@ -391,6 +391,15 @@ aws ec2 describe-network-interfaces --filters "Name=tag:Name,Values=<prefix>-fw1
 A primary cannot be changed in place. Recreate the affected pair's firewalls
 (`terraform apply -replace=...aws_network_interface.fw[\"fw1-untrust\"] -replace=...aws_instance.fw[\"fw1\"]`),
 which costs new serials and BYOL activations, then onboard, set up HA, upgrade and build GP again.
+Done live for Region B. Two lessons from it:
+- Replace **all eight ENIs and both instances**, and limit `-target` to
+  `module.region_b[0].module.firewall` and `module.region_b[0].module.routing`. The panel hosts
+  are `create_before_destroy` and depend on these ENIs. With the panel in the same run, Terraform
+  forces the ENIs into create-before-destroy too and fails with `InvalidIPAddress.InUse`, after it
+  has already removed the TGW route. Apply the panel afterwards.
+- Drop the old serials from `phase2-scm-config/fw_devices.auto.tfvars.json` before onboarding the
+  new ones. Move the old (disconnected) devices out of the folder and deactivate them in the
+  Customer Support Portal.
 
 Other HA facts:
 - HA1 needs TCP 28769/28260 **and** ICMP between the mgmt IPs.
