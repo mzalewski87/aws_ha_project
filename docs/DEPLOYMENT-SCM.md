@@ -372,6 +372,26 @@ aws ec2 assign-private-ip-addresses --network-interface-id <route-target trust E
   --private-ip-addresses <trust subnet>.100 --allow-reassignment
 ```
 
+**The floating IP must be a SECONDARY address (found live, Region B).** The plugin maps the
+failed unit's primary address to the peer's primary, and moves secondaries. The module used to
+pass the ENI addresses as an unordered set, so AWS sometimes made the **floating .100 the
+primary** of fw1's ENI ("10.20.10.100" sorts before "10.20.10.11"). The next failover then
+moved fw1's own `.11` and put the EIP on fw2's own `.12`: portal and gateway dead, and GA marked
+the region unhealthy.
+
+The module now passes an **ordered** list (`private_ip_list`, first = primary) for fresh
+deployments. Check an existing deployment; on fw1's untrust and trust ENIs the floating `.100`
+must NOT be the primary:
+
+```bash
+aws ec2 describe-network-interfaces --filters "Name=tag:Name,Values=<prefix>-fw1-untrust,<prefix>-fw1-trust" \
+  --query 'NetworkInterfaces[].[TagSet[?Key==`Name`]|[0].Value, PrivateIpAddresses[?Primary].PrivateIpAddress|[0]]' --output text
+```
+
+A primary cannot be changed in place. Recreate the affected pair's firewalls
+(`terraform apply -replace=...aws_network_interface.fw[\"fw1-untrust\"] -replace=...aws_instance.fw[\"fw1\"]`),
+which costs new serials and BYOL activations, then onboard, set up HA, upgrade and build GP again.
+
 Other HA facts:
 - HA1 needs TCP 28769/28260 **and** ICMP between the mgmt IPs.
 - Preemption is off (PANW guidance for AWS), so after a failover the roles stay swapped until a

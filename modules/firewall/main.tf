@@ -90,20 +90,27 @@ data "aws_ami" "vmseries" {
 resource "aws_network_interface" "fw" {
   for_each = local.fw_nics
 
-  subnet_id         = each.value.subnet_id
-  private_ips       = each.value.private_ips
-  security_groups   = [each.value.sg]
-  source_dest_check = each.value.dataplane ? false : true
-  tags              = merge(var.tags, { Name = "${var.name_prefix}-${each.value.fw}-${each.value.nic_type}" })
+  subnet_id = each.value.subnet_id
+  # ORDERED list: the first address is the PRIMARY. `private_ips` is a SET, so which address
+  # AWS made primary was arbitrary — and "10.20.10.100" sorts before "10.20.10.11". Seen live
+  # in Region B: fw1's untrust ENI got the FLOATING .100 as its primary and its own .11 as the
+  # secondary. The AWS HA plugin moves secondaries and maps primary->primary, so a failover
+  # moved .11 (not the floating IP) and put the EIP on fw2's own .12: portal and gateway dead.
+  private_ip_list_enabled = true
+  private_ip_list         = each.value.private_ips
+  security_groups         = [each.value.sg]
+  source_dest_check       = each.value.dataplane ? false : true
+  tags                    = merge(var.tags, { Name = "${var.name_prefix}-${each.value.fw}-${each.value.nic_type}" })
 
   # The untrust and trust ENIs carry a floating IP as a SECONDARY address, and the
   # PAN-OS AWS HA plugin moves it between the pair on failover
   # (AssignPrivateIpAddresses). That makes `private_ips` runtime-owned: after a
   # failover Terraform wants to put the floating IP back on fw1, fighting the
   # plugin and stranding the address on the passive unit. The primary IP is set
-  # at creation and never changes, so ignoring the list is safe.
+  # at creation and never changes, so ignoring the lists is safe. (private_ip_list_enabled is
+  # ignored too, so ENIs created before the ordered list existed are not touched.)
   lifecycle {
-    ignore_changes = [private_ips]
+    ignore_changes = [private_ips, private_ip_list, private_ip_list_enabled]
   }
 }
 
