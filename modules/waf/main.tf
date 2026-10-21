@@ -113,8 +113,10 @@ resource "aws_wafv2_web_acl" "this" {
 
 # REGIONAL ACLs are attached here (ALB); a CLOUDFRONT ACL is attached by the distribution
 # itself (web_acl_id), so it takes no association resource.
+# count, not for_each over the ARNs: on a fresh deployment the ALB ARN is only known after
+# apply, and for_each keys must be known at plan time.
 resource "aws_wafv2_web_acl_association" "this" {
-  for_each     = var.scope == "REGIONAL" ? toset(var.resource_arns) : toset([])
-  resource_arn = each.value
+  count        = var.scope == "REGIONAL" ? length(var.resource_arns) : 0
+  resource_arn = var.resource_arns[count.index]
   web_acl_arn  = aws_wafv2_web_acl.this.arn
 }
