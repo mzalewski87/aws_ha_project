@@ -102,9 +102,9 @@ variable "guac_rdp_source_cidrs" {
 }
 
 variable "guac_ldap_source_cidrs" {
-  description = "Guacamole subnet(s) allowed LDAP to the DC, for the AD sign-in (root guac_ldap_enabled), e.g. [\"10.11.20.0/23\"]. Empty (default) = no rule."
+  description = "Guacamole subnet(s) allowed LDAP to the DC, for the AD sign-in (root guac_ldap_enabled). [] disables the rule."
   type        = list(string)
-  default     = []
+  default     = ["10.11.20.0/23"]
 }
 
 variable "dc_replica_ips" {

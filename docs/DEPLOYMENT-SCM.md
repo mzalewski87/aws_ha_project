@@ -126,6 +126,7 @@ custom_domain_letsencrypt_email   = "<you@example.com>"
 custom_domain_letsencrypt_staging = true          # flip to false once everything works (5 certs/week limit)
 
 enable_guacamole      = true     # https://rdp.<zone>/guacamole/
+guac_ldap_enabled     = true     # AD accounts in group guacusers sign in to Guacamole (B8)
 enable_panel          = true     # https://panel.<zone>/   (path B only)
 panel_enable_failover = true     # panel operators may stop/start the firewalls (failover tests)
 web_app_hostname      = "website"   # https://website.<zone>: test site via CloudFront + ACM + WAF
@@ -263,7 +264,17 @@ A message such as "commit job N … was still running when the session ended" (a
 `cleanup`) means the commit outlived the SSH session. Check it with `show jobs id N`; it usually
 ends OK.
 
-### B8 — Panel (if `enable_panel`)
+### B8 — AD access: Guacamole (if `guac_ldap_enabled`) and panel (if `enable_panel`)
+
+```bash
+# Guacamole: rule guacamole-ldap-to-dc is created by B4 (default guac_ldap_source_cidrs).
+# Group guacusers + bind account svc-guacamole (password from the Guacamole secret).
+AWS_REGION=<region> DC_INSTANCE_ID=$(terraform output -raw dc_instance_id) \
+  GUAC_SECRET_ARN=$(terraform output -raw guacamole_admin_secret_arn) \
+  GUAC_USERS="admin" bash scripts/guacamole-ldap-setup.sh
+```
+
+Panel:
 
 ```bash
 # Rule panel-ldap-to-dc is created by B4 with the default panel_source_cidrs.
@@ -671,9 +682,10 @@ group is all it takes.
    **replaces the Guacamole host** when toggled on an existing deployment. The new host starts
    with a new database, so the admin and everyone else enrol TOTP again (the admin password stays
    the same).
-2. `phase2-scm-config` (path B) or `phase2-panorama-config` (path A):
-   `guac_ldap_source_cidrs = ["10.11.20.0/23"]` creates rule `guacamole-ldap-to-dc`
-   (`trust→trust`, `ldap`, Guacamole subnet → DC). Apply, then `scm-push.sh` or commit-all.
+2. Firewall rule `guacamole-ldap-to-dc` (`trust→trust`, `ldap`, Guacamole subnet → DC). Path B
+   creates it by default (`guac_ldap_source_cidrs` in `phase2-scm-config`). Path A needs
+   `guac_ldap_source_cidrs = ["10.11.20.0/23"]` in `phase2-panorama-config`, then apply and
+   commit-all.
 3. Group and bind account on the DC (re-run after every host replacement, because the bind password
    is regenerated with the host's secret):
 
