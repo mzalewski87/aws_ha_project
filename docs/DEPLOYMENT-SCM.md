@@ -119,6 +119,8 @@ custom_domain_letsencrypt_staging = true          # flip to false once everythin
 
 enable_guacamole = true          # https://rdp.<zone>/guacamole/
 enable_panel     = true          # https://panel.<zone>/   (path B only)
+web_app_hostname = "website"     # https://website.<zone>: test site via CloudFront + ACM + WAF
+waf_allowed_countries = ["PL"]   # WAF geo allow-list for panel + website (your own country!)
 # panel_enable_failover   = true                  # lets panel operators stop/start the firewalls
 # panel_alb_ingress_cidrs = ["<your public IP>/32"]
 ```
@@ -177,6 +179,24 @@ bash scripts/scm-verify.sh AWS-HA-Transit     # expect one active + one passive,
 
 The addresses above are the defaults (`security_vpc_cidr = 10.10.0.0/16`). For other CIDRs, read
 them from `terraform output fw_mgmt_private_ips` and `fw_ha2_private_ips`.
+
+### B4b — Upgrade to PAN-OS 12.2.4 (mandatory)
+
+The deployment requires **PAN-OS 12.2.4 or later**. Frontier Virtual Patching needs it, and both
+pairs must run the same release. The newest VM-Series BYOL Marketplace image is 12.2.3, so the
+firewalls are upgraded in place right after B4:
+
+```bash
+bash scripts/scm-upgrade.sh AWS-HA-Transit 12.2.4
+```
+
+- It upgrades only the units of the folder that are not on 12.2.4 yet. It excludes the others in
+  the upgrade rule (`exclude_devices`) and refuses to schedule if SCM did not store the
+  exclusion.
+- Both units of a pair reboot within seconds of each other, so expect a few minutes of outage
+  for that region.
+- Run it again after onboarding Region B (B10).
+- Check: `scm-verify.sh` (or the panel's Status page) shows 12.2.4 on every unit.
 
 ### B5 — Everything else (DC, PKI hosts, Guacamole, panel)
 
@@ -469,6 +489,62 @@ of the root by clients is not covered.
 RunCommand keeps the command text, including the domain-admin password, in SSM history for its
 retention period. Use a lab-only account and rotate it afterwards.
 
+## WAF, the test website and what stays outside WAF
+
+`enable_waf` (default on) puts **AWS WAF** in front of the two public **web** endpoints
+(`waf.tf`, `modules/waf`):
+
+| Endpoint | WAF scope | Attached to |
+|---|---|---|
+| `https://panel.<zone>/` | REGIONAL (Region A) | the panel ALB |
+| `https://website.<zone>/` (`web_app_hostname`) | CLOUDFRONT (us-east-1) | the CloudFront distribution |
+
+Rules, in order:
+1. `geo-allow-only` blocks every source country not in `waf_allowed_countries` (lab: `["PL"]`;
+   default empty = no geo rule).
+2. A per-IP rate limit. The panel's failover page polls, about 150 requests per 5 min per open
+   tab, so the limit is 1000.
+3. AWS managed groups: IP reputation, anonymous IPs (VPN/Tor/hosting), known bad inputs (Log4j
+   and friends), the core rule set, and SQLi.
+
+Blocks show up in CloudWatch metrics and as WAF sampled requests per rule.
+
+**Website.** CloudFront (ACM certificate in us-east-1, auto-renewing) → app NLB → firewall DNAT →
+Apache in spoke 1, so the firewalls still inspect it. The NLB has a security group that admits
+only **CloudFront's origin-facing prefix list** (`app_nlb_cloudfront_only`, default on), so the
+site cannot be reached around CloudFront and its WAF. Turning this on for an existing deployment
+replaces the NLB; CloudFront follows the new name in the same apply.
+
+**Outside WAF, by design:**
+- GlobalProtect (`gp.<zone>` via Global Accelerator, `gw-a`/`gw-b` on the firewall EIPs). WAF
+  only fronts HTTP(S) on ALB, CloudFront and API Gateway, and GP clients must reach the firewalls
+  directly.
+- `http://gp.<zone>` (port 80 through GA to the firewall EIP) still reaches the test page without
+  TLS or WAF. Use `https://website.<zone>`.
+- Guacamole's ALB can take the same module (`modules/waf`, scope REGIONAL) if wanted.
+
+## Global Accelerator: how traffic really flows
+
+Both endpoint groups have a 100 % traffic dial. That is **not** a 50/50 split and there is no
+"primary" region. GA sends each client to the **nearest healthy** region, measured from the
+client's GA edge location. Clients in Poland land in eu-central-1 (Region A). Clients nearer to
+Ireland land in eu-west-1. If a region's endpoint fails its health check, all of its clients move
+to the other region.
+
+The panel shows exactly this: the region serving clients near the panel is *serving (nearest)*,
+the other healthy region *standby*, and an unhealthy one *not serving*. It reads endpoint health
+from the GA API, cached 15 s.
+
+An active/standby design would set Region B's traffic dial to 0 % and raise it on failure, which
+needs automation (GA does not move traffic to a 0 % group by itself). The proximity behaviour
+fits GlobalProtect better: users near each region use it, and each region backs up the other.
+
+**Failover time.** GA health checks run every 10 s, the shortest interval GA allows. With the
+default threshold of 3, a region outage left the portal unreachable for **73 s** in the panel's
+region test. The threshold is now **1** (`health_check_threshold` in `modules/global_accelerator`).
+Detection takes about 10 s, and the rest is GA propagation plus the firewalls going down. The
+price is that a single lost health check also moves traffic.
+
 ## Guacamole (both paths)
 
 - An internet-facing ALB (ACM certificate) leads to the Guacamole host in the mgmt VPC, which
@@ -545,8 +621,9 @@ routes point at, and whether the portal answers.
 | Test | What it does | Typical |
 |---|---|---|
 | Check and repair sync | waits for `running-sync`, forces `sync-to-remote` only as a last resort | seconds |
-| HA failover | suspend the active unit, wait for the takeover, restore it, fail back | ~1–2 min |
-| Hard failover | stop the active unit's EC2 instance, takeover, start it, wait until it is passive and synchronized, fail back | ~7–9 min (PAN-OS boot) |
+| HA failover | suspend the active unit, wait for the takeover, restore it, fail back | ~1 min (measured 47 s) |
+| Hard failover | stop the active unit's EC2 instance, takeover, start it, wait until it is passive and synchronized, fail back | ~9 min (measured ~7.5 min; PAN-OS boot) |
+| Region outage | stop BOTH units of a region (portal moves to the other region via GA), observe 30 s, start them, wait for a clean pair, fail back | ~10 min (measured 8.5 min with a 60 s observation) |
 | Align the pair | make the preferred primary (lowest HA priority) active again | ~1 min |
 | Recover | start stopped units, clear `suspended`, wait for a clean pair | varies |
 
