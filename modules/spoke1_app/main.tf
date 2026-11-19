@@ -112,6 +112,10 @@ resource "aws_instance" "apache" {
     ignore_changes = [ami]
   }
 
+  # cloud-init writes the page only on the first boot, so an in-place user_data update (stop/start)
+  # would leave the old page. Replace the host instead: it is disposable and keeps its private IP.
+  user_data_replace_on_change = true
+
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = var.subnet_id
@@ -159,7 +163,7 @@ write_files:
           <div class="info-box"><h3>Architecture</h3><ul>
             <li>Firewall: <code>2x VM-Series Active/Passive HA</code></li>
             <li>Hub: <code>Transit Gateway (appliance mode)</code></li>
-            <li>Managed by: <code>Panorama</code></li>
+            <li>Managed by: <code>${var.managed_by}</code></li>
           </ul></div>
           <p><em>All traffic to this server is inspected by Palo Alto Networks VM-Series.</em></p>
         </div>

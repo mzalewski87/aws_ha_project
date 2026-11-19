@@ -243,7 +243,7 @@ const ARCHITECTURE_DATA_EN = {
       content: `
         <ul>
           <li><strong>Advanced IP Defense</strong> (list mode, <code>ip_defense_mode = off | alert | block</code>): PANW's predefined IP lists (<code>panw-aipd-*</code>, Tor exit, bullet-proof, high-risk) at the top of the rulebase. <code>alert</code> = outbound allow + log; <code>block</code> = outbound deny + inbound deny for listed sources. Verified with <code>test security-policy-match</code>.</li>
-          <li><strong>Frontier Virtual Patching</strong>: a Vulnerability Protection profile setting needing Advanced Threat Prevention Plus and <strong>PAN-OS 12.2.4+</strong> — the reason for the in-place upgrade. Pre-disclosure signatures cannot be triggered on demand.</li>
+          <li><strong>Frontier Virtual Patching</strong>: ATP Plus signatures enforced by the Vulnerability Protection profile; needs Advanced Threat Prevention Plus and <strong>PAN-OS 12.2.4+</strong> (the reason for the in-place upgrade). Every allow rule carries the profile group <code>lab-threat-prevention</code> (<code>threat_prevention</code>), without which nothing is enforced. Pre-disclosure signatures cannot be triggered on demand.</li>
         </ul>
       `
     },
@@ -417,7 +417,7 @@ const ARCHITECTURE_DATA_EN = {
         "alert": "Outbound allow + log — a hit is visible by rule name in the traffic log",
         "block": "Outbound deny + inbound deny for listed sources",
         "Verified": "panw-aipd-c2-infra-ip-list expands to ~5500 addresses; test security-policy-match hits ipdef-outbound-alert / -block",
-        "Frontier Virtual Patching": "Vulnerability Protection setting; needs Advanced Threat Prevention Plus + PAN-OS 12.2.4+",
+        "Frontier Virtual Patching": "ATP Plus signatures enforced by Vulnerability Protection; profile group lab-threat-prevention on every allow rule; needs ATP Plus + PAN-OS 12.2.4+",
         "Testing": "Pre-disclosure signatures cannot be triggered on demand (no PANW test method)",
         "Side effect": "Each content download is followed by a ~2 min HA-Sync job; config writes then report \"A commit is pending\""
       }

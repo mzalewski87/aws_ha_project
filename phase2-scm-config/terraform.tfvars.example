@@ -21,3 +21,4 @@ scm_client_id = "<service-account>@<tsg>.iam.panserviceaccount.com"
 
 # --- Advanced IP Defense (PANW predefined IP lists): off | alert | block
 # ip_defense_mode = "off"
+# threat_prevention = true   # profile group lab-threat-prevention on every allow rule (Vulnerability Protection = FVP)

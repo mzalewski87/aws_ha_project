@@ -740,8 +740,27 @@ only works when the rule is created, so an existing rule has to be recreated.
 ### Frontier Virtual Patching
 
 It needs the Advanced Threat Prevention Plus licence and **PAN-OS 12.2.4+**, which is why the
-pair was upgraded in place. It is a Vulnerability Protection profile setting. Its pre-disclosure
-signatures **cannot be triggered on demand**, and PANW documents no test method.
+pair was upgraded in place. FVP is not a switch of its own: it is the ATP Plus stream of
+"vaulted" and streaming signatures, and the **Vulnerability Protection profile** enforces them.
+So it protects only traffic matched by a rule that **has a profile group attached**.
+
+- `threat_prevention = true` (default) creates the profile group `lab-threat-prevention`, with
+  PANW's predefined `best-practice` Vulnerability Protection, Anti-Spyware and Antivirus/WildFire
+  profiles, and attaches it to **every allow rule**.
+- URL Filtering and File Blocking are left out on purpose. Their `best-practice` profiles block
+  whole categories and file types, which would silently break lab flows (DC updates, GP client
+  downloads).
+- Without the group, the licence and PAN-OS 12.2.4 alone enforce nothing. This was seen live on
+  2026-11-19: every rule in the folder had an empty `profile_setting`.
+- Check it in SCM: *Security Policy* → the rules show the group in the *Profile* column. Or ask
+  the API: `profile_setting.group` of each rule.
+- Path A (Panorama) has no equivalent in code. There, attach a security profile group with a
+  Vulnerability Protection profile to the allow rules by hand.
+
+Its pre-disclosure signatures **cannot be triggered on demand**, and PANW documents no test
+method. Content (Apps+Threats) must also stay current: SCM's update schedule needs a role with
+device-settings rights (the lab's service account got HTTP 403), so update content with
+`scm-gp-local.sh content` or set the schedule in the SCM UI.
 
 ### Admin panel (`modules/panel`, path B only)
 

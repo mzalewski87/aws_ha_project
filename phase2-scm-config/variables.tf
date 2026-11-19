@@ -136,6 +136,12 @@ variable "ip_defense_mode" {
   }
 }
 
+variable "threat_prevention" {
+  description = "Attach the profile group lab-threat-prevention (predefined best-practice Vulnerability Protection, Anti-Spyware and Antivirus/WildFire profiles) to every allow rule. Vulnerability Protection is what enforces Frontier Virtual Patching (ATP Plus). false = rules match App-ID only."
+  type        = bool
+  default     = true
+}
+
 variable "ip_defense_outbound_edls" {
   description = "Destination lists matched on traffic LEAVING the protected zones (command-and-control, malware, bulletproof hosting, high risk)."
   type        = list(string)

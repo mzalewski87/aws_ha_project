@@ -443,6 +443,7 @@ module "spoke1_app" {
   subnet_id  = module.vpc_spoke1.subnet_ids_by_role["workload"][0]
   private_ip = cidrhost(local.spoke1_subnets["workload"].cidrs[0], 10)
   key_name   = local.key_name
+  managed_by = var.management_mode == "scm" ? "Strata Cloud Manager" : "Panorama"
 
   tags       = var.tags
   depends_on = [module.routing]
