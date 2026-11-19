@@ -291,6 +291,28 @@ resource "scm_nat_rule" "inbound_app_dnat" {
   depends_on = [scm_nat_rule.gp_internal_snat]
 }
 
+# ---- Threat prevention on every allow rule (var.threat_prevention) ---------------
+# Without a security profile group an allow rule only matches App-ID: no Vulnerability Protection,
+# so Frontier Virtual Patching (ATP Plus signatures, consumed by the Vulnerability Protection
+# profile) protected nothing even though the licence and PAN-OS 12.2.4 were in place (seen live:
+# every rule in the folder had an empty profile_setting). This group uses PANW's predefined
+# best-practice profiles for the threat engines only. URL Filtering and File Blocking are left out
+# on purpose: their best-practice profiles block whole categories and file types, which would
+# silently break lab flows (DC updates, GP client downloads) that are not what the demo is about.
+resource "scm_profile_group" "threat" {
+  count  = var.threat_prevention ? 1 : 0
+  name   = "lab-threat-prevention"
+  folder = local.folder
+
+  vulnerability               = ["best-practice"]
+  spyware                     = ["best-practice"]
+  virus_and_wildfire_analysis = ["best-practice"]
+}
+
+locals {
+  threat_profile = var.threat_prevention ? { group = [scm_profile_group.threat[0].name] } : null
+}
+
 # ---- Security policy (ordered by depends_on; deny-all in `post`) --------------
 # PAN-OS matches security policy on PRE-NAT addresses, so inbound-app uses the
 # floating VIP, not the Apache IP (see path A / CLAUDE.md).
@@ -329,6 +351,8 @@ resource "scm_security_rule" "ipdef_outbound" {
   service           = ["any"]
   action            = local.ipdef_out
   log_end           = true
+  # alert mode is an allow rule, so it gets the same inspection as every other allow.
+  profile_setting = local.ipdef_out == "allow" ? local.threat_profile : null
 }
 
 resource "scm_security_rule" "ipdef_inbound" {
@@ -354,17 +378,18 @@ resource "scm_security_rule" "guacamole_rdp" {
 
   count = length(var.guac_rdp_source_cidrs) > 0 && var.dc_private_ip != "" ? 1 : 0
 
-  name        = "guacamole-rdp-to-dc"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["trust"]
-  to          = ["trust"]
-  source      = var.guac_rdp_source_cidrs
-  destination = ["${var.dc_private_ip}/32"]
-  application = ["ms-rdp"]
-  service     = ["application-default"]
-  action      = "allow"
-  log_end     = true
+  name            = "guacamole-rdp-to-dc"
+  folder          = local.folder
+  position        = "pre"
+  from            = ["trust"]
+  to              = ["trust"]
+  source          = var.guac_rdp_source_cidrs
+  destination     = ["${var.dc_private_ip}/32"]
+  application     = ["ms-rdp"]
+  service         = ["application-default"]
+  action          = "allow"
+  log_end         = true
+  profile_setting = local.threat_profile
 }
 
 resource "scm_security_rule" "panel_ldap" {
@@ -372,17 +397,18 @@ resource "scm_security_rule" "panel_ldap" {
 
   count = length(var.panel_source_cidrs) > 0 && var.dc_private_ip != "" ? 1 : 0
 
-  name        = "panel-ldap-to-dc"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["trust"]
-  to          = ["trust"]
-  source      = var.panel_source_cidrs
-  destination = ["${var.dc_private_ip}/32"]
-  application = ["ldap"]
-  service     = ["application-default"]
-  action      = "allow"
-  log_end     = true
+  name            = "panel-ldap-to-dc"
+  folder          = local.folder
+  position        = "pre"
+  from            = ["trust"]
+  to              = ["trust"]
+  source          = var.panel_source_cidrs
+  destination     = ["${var.dc_private_ip}/32"]
+  application     = ["ldap"]
+  service         = ["application-default"]
+  action          = "allow"
+  log_end         = true
+  profile_setting = local.threat_profile
 }
 
 # Guacamole AD sign-in (root guac_ldap_enabled): the host binds to the DC over LDAP, through the
@@ -392,17 +418,18 @@ resource "scm_security_rule" "guacamole_ldap" {
 
   count = length(var.guac_ldap_source_cidrs) > 0 && var.dc_private_ip != "" ? 1 : 0
 
-  name        = "guacamole-ldap-to-dc"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["trust"]
-  to          = ["trust"]
-  source      = var.guac_ldap_source_cidrs
-  destination = ["${var.dc_private_ip}/32"]
-  application = ["ldap"]
-  service     = ["application-default"]
-  action      = "allow"
-  log_end     = true
+  name            = "guacamole-ldap-to-dc"
+  folder          = local.folder
+  position        = "pre"
+  from            = ["trust"]
+  to              = ["trust"]
+  source          = var.guac_ldap_source_cidrs
+  destination     = ["${var.dc_private_ip}/32"]
+  application     = ["ldap"]
+  service         = ["application-default"]
+  action          = "allow"
+  log_end         = true
+  profile_setting = local.threat_profile
 }
 
 resource "scm_security_rule" "dc_replication" {
@@ -410,79 +437,84 @@ resource "scm_security_rule" "dc_replication" {
 
   count = length(var.dc_replica_ips) >= 2 ? 1 : 0
 
-  name        = "dc-replication"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["trust"]
-  to          = ["trust"]
-  source      = [for ip in var.dc_replica_ips : "${ip}/32"]
-  destination = [for ip in var.dc_replica_ips : "${ip}/32"]
-  application = ["any"]
-  service     = ["any"]
-  action      = "allow"
-  log_end     = true
+  name            = "dc-replication"
+  folder          = local.folder
+  position        = "pre"
+  from            = ["trust"]
+  to              = ["trust"]
+  source          = [for ip in var.dc_replica_ips : "${ip}/32"]
+  destination     = [for ip in var.dc_replica_ips : "${ip}/32"]
+  application     = ["any"]
+  service         = ["any"]
+  action          = "allow"
+  log_end         = true
+  profile_setting = local.threat_profile
 }
 
 resource "scm_security_rule" "gp_users_to_internal" {
-  name        = "gp-users-to-internal"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["vpn"]
-  to          = ["trust", "untrust"]
-  source      = ["any"]
-  destination = ["any"]
-  application = ["any"]
-  service     = ["application-default"]
-  action      = "allow"
-  log_end     = true
-  depends_on  = [scm_security_rule.panel_ldap, scm_security_rule.dc_replication]
+  name            = "gp-users-to-internal"
+  folder          = local.folder
+  position        = "pre"
+  from            = ["vpn"]
+  to              = ["trust", "untrust"]
+  source          = ["any"]
+  destination     = ["any"]
+  application     = ["any"]
+  service         = ["application-default"]
+  action          = "allow"
+  log_end         = true
+  profile_setting = local.threat_profile
+  depends_on      = [scm_security_rule.panel_ldap, scm_security_rule.dc_replication]
 }
 
 resource "scm_security_rule" "spokes_outbound" {
-  name        = "spokes-outbound"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["trust"]
-  to          = ["untrust"]
-  source      = ["any"]
-  destination = ["any"]
-  application = ["any"]
-  service     = ["application-default"]
-  action      = "allow"
-  log_end     = true
-  depends_on  = [scm_security_rule.gp_users_to_internal]
+  name            = "spokes-outbound"
+  folder          = local.folder
+  position        = "pre"
+  from            = ["trust"]
+  to              = ["untrust"]
+  source          = ["any"]
+  destination     = ["any"]
+  application     = ["any"]
+  service         = ["application-default"]
+  action          = "allow"
+  log_end         = true
+  profile_setting = local.threat_profile
+  depends_on      = [scm_security_rule.gp_users_to_internal]
 }
 
 resource "scm_security_rule" "inbound_app" {
-  name        = "inbound-app"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["untrust"]
-  to          = ["trust"]
-  source      = ["any"]
-  destination = ["${var.app_dnat_public_ip}/32"]
-  application = ["web-browsing", "ssl"]
-  service     = ["application-default"]
-  action      = "allow"
-  log_end     = true
-  depends_on  = [scm_security_rule.spokes_outbound]
+  name            = "inbound-app"
+  folder          = local.folder
+  position        = "pre"
+  from            = ["untrust"]
+  to              = ["trust"]
+  source          = ["any"]
+  destination     = ["${var.app_dnat_public_ip}/32"]
+  application     = ["web-browsing", "ssl"]
+  service         = ["application-default"]
+  action          = "allow"
+  log_end         = true
+  profile_setting = local.threat_profile
+  depends_on      = [scm_security_rule.spokes_outbound]
 }
 
 # Inbound GlobalProtect is intrazone untrust->untrust self-traffic and WOULD be
 # eaten by deny-all without this explicit allow.
 resource "scm_security_rule" "gp_portal_gateway_inbound" {
-  name        = "gp-portal-gateway-inbound"
-  folder      = local.folder
-  position    = "pre"
-  from        = ["untrust"]
-  to          = ["untrust"]
-  source      = ["any"]
-  destination = [for ip in var.gp_local_ips : "${ip}/32"]
-  application = ["any"]
-  service     = ["service-https", "service-http", scm_service.gp_ipsec.name]
-  action      = "allow"
-  log_end     = true
-  depends_on  = [scm_security_rule.inbound_app]
+  name            = "gp-portal-gateway-inbound"
+  folder          = local.folder
+  position        = "pre"
+  from            = ["untrust"]
+  to              = ["untrust"]
+  source          = ["any"]
+  destination     = [for ip in var.gp_local_ips : "${ip}/32"]
+  application     = ["any"]
+  service         = ["service-https", "service-http", scm_service.gp_ipsec.name]
+  action          = "allow"
+  log_end         = true
+  profile_setting = local.threat_profile
+  depends_on      = [scm_security_rule.inbound_app]
 }
 
 resource "scm_security_rule" "deny_all" {

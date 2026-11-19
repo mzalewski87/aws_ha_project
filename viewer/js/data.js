@@ -235,7 +235,7 @@ const ARCHITECTURE_DATA = {
       content: `
         <ul>
           <li><strong>Advanced IP Defense</strong> (<code>ip_defense_mode = off | alert | block</code>): predefiniowane listy IP PANW (<code>panw-aipd-*</code>, Tor, bullet-proof, high-risk) na górze polityki; <code>alert</code> = allow + log, <code>block</code> = deny wychodzący i przychodzący.</li>
-          <li><strong>Frontier Virtual Patching</strong>: ustawienie profilu Vulnerability Protection; wymaga Advanced Threat Prevention Plus i <strong>PAN-OS 12.2.4+</strong>. Sygnatur nie da się wywołać na żądanie.</li>
+          <li><strong>Frontier Virtual Patching</strong>: sygnatury ATP Plus egzekwowane przez profil Vulnerability Protection; wymaga Advanced Threat Prevention Plus i <strong>PAN-OS 12.2.4+</strong>. Każda reguła allow ma grupę profili <code>lab-threat-prevention</code> (<code>threat_prevention</code>), bez niej nic nie jest egzekwowane. Sygnatur nie da się wywołać na żądanie.</li>
         </ul>
       `
     },
@@ -363,7 +363,7 @@ const ARCHITECTURE_DATA = {
         "Advanced IP Defense": "ip_defense_mode = off | alert | block",
         "Listy": "panw-aipd-*, panw-torexit-ip-list, panw-bulletproof-ip-list, panw-highrisk-ip-list",
         "alert / block": "allow + log / deny wychodzący + przychodzący",
-        "Frontier Virtual Patching": "Wymaga Advanced Threat Prevention Plus + PAN-OS 12.2.4+",
+        "Frontier Virtual Patching": "Sygnatury ATP Plus w profilu Vulnerability Protection; grupa lab-threat-prevention na każdej regule allow; wymaga ATP Plus + PAN-OS 12.2.4+",
         "Testy": "Sygnatur pre-disclosure nie da się wywołać na żądanie"
       }
     },

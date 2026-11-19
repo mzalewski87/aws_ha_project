@@ -44,6 +44,12 @@ variable "key_name" {
   default     = null
 }
 
+variable "managed_by" {
+  description = "Management plane named on the demo page (\"Panorama\" or \"Strata Cloud Manager\")."
+  type        = string
+  default     = "Panorama"
+}
+
 variable "tags" {
   description = "Extra tags merged onto every resource."
   type        = map(string)
