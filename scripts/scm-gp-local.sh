@@ -15,8 +15,8 @@
 #
 # Modes:
 #   admin       create the temporary local superuser `gpapi` (SSH + commit)
-#   build       certificate (self-signed bootstrap), TLS profile, local auth, tunnel node,
-#               gateway, portal; commit polled to completion
+#   build       certificate (self-signed bootstrap), TLS profile, sign-in (local or AD, see
+#               GP_AUTH), tunnel node, gateway, portal; commit polled to completion
 #   letsencrypt replace the bootstrap cert with the Let's Encrypt one from the root module
 #               (terraform output custom_domain_cert_pem / _key_pem)
 #   cleanup     delete the `gpapi` superuser again
@@ -32,10 +32,18 @@
 # Required env (never commit values; keep them in an untracked file):
 #   SCM_TSG_ID SCM_CLIENT_ID SCM_CLIENT_SECRET     (see scm-lib.sh)
 #   GPAPI_PASSWORD     password of the temporary `gpapi` admin
-#   GP_USER_PASSWORD   password of the GP test user (`gpuser`)
+#   GP_USER_PASSWORD   password of the local GP test user (`gpuser`); needed for GP_AUTH=local
+#   GP_LDAP_BIND_PASSWORD  password of the AD bind account; needed for GP_AUTH=ldap
 #   JUMP_INSTANCE_ID   SSM jump host (root output ssm_jumphost_instance_id)
 #   KEY_FILE           SSH private key (for `admin`/`cleanup`, which use the CLI)
 # Optional: GW_NAME PORTAL_NAME CERT_CN FLOATING IP_POOL SPLIT_ROUTES MGMT_IPS FW_IP
+#   GP_AUTH   local (default): a local account on each unit (gpuser).
+#             ldap: AD accounts that are members of GP_VPN_GROUP (default vpnusers). The AD side
+#             (group, bind account svc-gp-ldap, test user) comes from scripts/gp-ldap-setup.sh.
+#             LDAP_SERVERS (default: the DNS servers, i.e. this region's DC first, then the
+#             other region's), LDAP_BASE_DN (default from DNS_SUFFIX), LDAP_BIND_USER
+#             (default svc-gp-ldap). The firewalls query the DCs from their management
+#             interface; the security VPC's management subnets route both DC CIDRs to the TGW.
 #   GATEWAYS  the portal's external gateways, space-separated "fqdn[:priority]" (default: GW_FQDN
 #             with priority 1). Multi-region: GATEWAYS="gw-a.<zone>:1 gw-b.<zone>:2" on the
 #             portal units of BOTH regions; clients then pick the best-available gateway.
@@ -66,6 +74,12 @@ DNS_SERVER_SECONDARY="${DNS_SERVER_SECONDARY:-}"         # e.g. a second DC
 DNS_SUFFIX="${DNS_SUFFIX:-panw.labs}"                    # root var dc_domain_name
 TUN_IF="tunnel.1"; LOCAL_IF="loopback.1"     # SCM $gp_tunnel / $gp_loopback default_value
 GPUSER="${GPUSER:-gpuser}"
+GP_AUTH="${GP_AUTH:-local}"
+case "$GP_AUTH" in local|ldap) ;; *) scm_die "GP_AUTH must be local or ldap (got '$GP_AUTH')" ;; esac
+GP_VPN_GROUP="${GP_VPN_GROUP:-vpnusers}"
+LDAP_SERVERS="${LDAP_SERVERS:-$DNS_SERVER_PRIMARY ${DNS_SERVER_SECONDARY:-}}"
+LDAP_BASE_DN="${LDAP_BASE_DN:-$(printf 'DC=%s' "${DNS_SUFFIX//./,DC=}")}"
+LDAP_BIND_USER="${LDAP_BIND_USER:-svc-gp-ldap}"
 LP="${LP:-22292}"
 
 # Active unit = the connected device whose SCM ha_state is "active" (within MGMT_IPS, if set).
@@ -173,16 +187,22 @@ cleanup)
   cli_file "$F"; rm -f "$F" ;;
 
 build)
-  : "${GP_USER_PASSWORD:?GP_USER_PASSWORD required}"
+  if [ "$GP_AUTH" = "local" ]; then
+    : "${GP_USER_PASSWORD:?GP_USER_PASSWORD required (GP_AUTH=local)}"
+    AUTH_PROFILE="gp-local"
+  else
+    : "${GP_LDAP_BIND_PASSWORD:?GP_LDAP_BIND_PASSWORD required (GP_AUTH=ldap)}"
+    AUTH_PROFILE="gp-ldap"
+  fi
   api_login
   FAILED=0
-  setcfg() {  # xpath element label
-    local r i
+  setcfg() {  # xpath element label [action: set (default, merges) | edit (replaces the node)]
+    local r i act="${4:-set}"
     # "A commit is pending" = a job holds the config (live: on an active unit, every content
     # download (e.g. Frontier Virtual Patching, every few minutes) triggers an HA-Sync that
     # takes ~2 min). Wait it out instead of failing the whole build.
     for i in $(seq 1 20); do
-      r="$(curl -sk -m 120 "$BASE" --data-urlencode type=config --data-urlencode action=set \
+      r="$(curl -sk -m 120 "$BASE" --data-urlencode type=config --data-urlencode "action=$act" \
            --data-urlencode "xpath=$1" --data-urlencode "element=$2" --data-urlencode "key=$KEY")"
       grep -q "A commit is pending" <<<"$r" || break
       [ "$i" = 1 ] && scm_log "WAIT  $3: a commit/HA-sync job is running, retrying every 15 s"
@@ -212,16 +232,49 @@ build)
   fi
   setcfg "$VS/ssl-tls-service-profile/entry[@name='gp-ssl-tls']" \
     "<certificate>$CERT_USE</certificate><protocol-settings><min-version>tls1-2</min-version><max-version>tls1-2</max-version></protocol-settings>" "ssl-tls profile"
-  setcfg "$VS/local-user-database/user/entry[@name='$GPUSER']" "<phash>$(printf '%s' "$GP_USER_PASSWORD" | openssl passwd -1 -stdin)</phash>" "local user $GPUSER"
-  setcfg "$VS/authentication-profile/entry[@name='gp-local']" \
-    "<method><local-database/></method><allow-list><member>all</member></allow-list>" "authentication profile"
+  if [ "$GP_AUTH" = "local" ]; then
+    setcfg "$VS/local-user-database/user/entry[@name='$GPUSER']" "<phash>$(printf '%s' "$GP_USER_PASSWORD" | openssl passwd -1 -stdin)</phash>" "local user $GPUSER"
+    setcfg "$VS/authentication-profile/entry[@name='gp-local']" \
+      "<method><local-database/></method><allow-list><member>all</member></allow-list>" "authentication profile"
+  else
+    # AD sign-in, gated on the GP_VPN_GROUP group (same model as path A, modules/panorama_config/gp.tf).
+    #  * Server profile: one entry per DC, this region's first. bind-timelimit 3 s is load-bearing
+    #    for a region outage: PAN-OS must give up on the dead region's DC and move on before the
+    #    GlobalProtect sign-in times out. Both DCs hold the same accounts (AD replication).
+    #  * Group mapping resolves the group's members; the allow-list matches against it.
+    #  * user-domain = NetBIOS name (first label of the domain): group mapping stores members as
+    #    DOMAIN\user while users type the bare name. Do NOT add a username-modifier
+    #    (%USERDOMAIN%\%USERINPUT%): the LDAP search then looks for sAMAccountName=DOMAIN\user and
+    #    every sign-in fails "Invalid username/password" (seen live).
+    #  * Group mapping runs on the ACTIVE unit only (User-ID is down on the passive one, "HA state")
+    #    and needs up to a minute after the commit: sign-ins before that fail "User is not in
+    #    allowlist". It is not a config error; wait, or `debug user-id refresh group-mapping all`.
+    #  * The group DN is lowercase, as group mapping normalises it, so the allow-list compares exactly.
+    [[ "$GP_LDAP_BIND_PASSWORD" =~ ^[A-Za-z0-9]+$ ]] || scm_die "GP_LDAP_BIND_PASSWORD: letters and digits only"
+    srv=""; n=0
+    for ip in $LDAP_SERVERS; do
+      [[ "$ip" =~ ^[0-9.]+$ ]] || scm_die "bad LDAP_SERVERS entry: $ip"
+      n=$((n + 1)); srv="$srv<entry name=\"dc$n\"><address>$ip</address><port>389</port></entry>"
+    done
+    [ "$n" -gt 0 ] || scm_die "LDAP_SERVERS is empty"
+    group_dn="$(printf 'cn=%s,cn=users,%s' "$GP_VPN_GROUP" "$LDAP_BASE_DN" | tr '[:upper:]' '[:lower:]')"
+    netbios="$(printf '%s' "${DNS_SUFFIX%%.*}" | tr '[:upper:]' '[:lower:]')"
+    # edit (not set) for the profile: a set would MERGE the server list and keep stale DCs.
+    setcfg "/config/shared/server-profile/ldap/entry[@name='gp-ad-ldap']" \
+      "<entry name=\"gp-ad-ldap\"><server>$srv</server><ldap-type>active-directory</ldap-type><base>$LDAP_BASE_DN</base><bind-dn>CN=$LDAP_BIND_USER,CN=Users,$LDAP_BASE_DN</bind-dn><bind-password>$GP_LDAP_BIND_PASSWORD</bind-password><ssl>no</ssl><bind-timelimit>3</bind-timelimit><timelimit>5</timelimit><retry-interval>60</retry-interval></entry>" \
+      "LDAP server profile gp-ad-ldap ($LDAP_SERVERS)" edit
+    setcfg "$VS/group-mapping/entry[@name='gp-group-map']" \
+      "<server-profile>gp-ad-ldap</server-profile><update-interval>60</update-interval><group-include-list><member>$group_dn</member></group-include-list>" "group mapping ($GP_VPN_GROUP)"
+    setcfg "$VS/authentication-profile/entry[@name='gp-ldap']" \
+      "<method><ldap><server-profile>gp-ad-ldap</server-profile><login-attribute>sAMAccountName</login-attribute></ldap></method><allow-list><member>$group_dn</member></allow-list><user-domain>$netbios</user-domain>" "authentication profile gp-ldap"
+  fi
   # 2) Second config subtree of a tunnel-mode gateway (network/tunnel/global-protect-gateway);
   #    without it the commit fails with `gp_broker: <local-address> tag does not exist`.
   setcfg "$NET/tunnel/global-protect-gateway/entry[@name='${GW_NAME}-tun']" \
     "<local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family></local-address><tunnel-interface>$TUN_IF</tunnel-interface>" "tunnel node"
   # 3) Client IP pool in EXACTLY one place (remote-user-tunnel-configs), never also at gateway level.
   setcfg "$VS/global-protect/global-protect-gateway/entry[@name='$GW_NAME']" \
-    "<tunnel-mode>yes</tunnel-mode><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><remote-user-tunnel>$TUN_IF</remote-user-tunnel><client-auth><entry name=\"default\"><authentication-profile>gp-local</authentication-profile><os>Any</os></entry></client-auth><remote-user-tunnel-configs><entry name=\"gp-tunnel-config\"><ip-pool><member>$IP_POOL</member></ip-pool><split-tunneling><access-route><member>$SPLIT_ROUTES</member></access-route></split-tunneling><dns-server><member>$DNS_SERVER_PRIMARY</member>${DNS_SERVER_SECONDARY:+<member>$DNS_SERVER_SECONDARY</member>}</dns-server><dns-suffix><member>$DNS_SUFFIX</member></dns-suffix></entry></remote-user-tunnel-configs>" "gateway"
+    "<tunnel-mode>yes</tunnel-mode><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><remote-user-tunnel>$TUN_IF</remote-user-tunnel><client-auth><entry name=\"default\"><authentication-profile>$AUTH_PROFILE</authentication-profile><os>Any</os></entry></client-auth><remote-user-tunnel-configs><entry name=\"gp-tunnel-config\"><ip-pool><member>$IP_POOL</member></ip-pool><split-tunneling><access-route><member>$SPLIT_ROUTES</member></access-route></split-tunneling><dns-server><member>$DNS_SERVER_PRIMARY</member>${DNS_SERVER_SECONDARY:+<member>$DNS_SERVER_SECONDARY</member>}</dns-server><dns-suffix><member>$DNS_SUFFIX</member></dns-suffix></entry></remote-user-tunnel-configs>" "gateway"
   # 4) The portal needs the three custom pages or the commit fails ("is missing 'custom-*-page'").
   #    Its external gateways: GATEWAYS ("fqdn[:priority] ..."), else GW_FQDN alone. An IP
   #    would go in <ip>, not <fqdn> ("fqdn <ip> is invalid" — path A); these are FQDNs.
@@ -232,7 +285,7 @@ build)
     GW_ENTRIES="$GW_ENTRIES<entry name=\"${fq%%.*}\"><fqdn>$fq</fqdn><priority-rule><entry name=\"Any\"><priority>$pr</priority></entry></priority-rule></entry>"
   done
   setcfg "$VS/global-protect/global-protect-portal/entry[@name='$PORTAL_NAME']" \
-    "<portal-config><custom-login-page>factory-default</custom-login-page><custom-home-page>factory-default</custom-home-page><custom-help-page>factory-default</custom-help-page><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><client-auth><entry name=\"default\"><authentication-profile>gp-local</authentication-profile><os>Any</os></entry></client-auth></portal-config><client-config><configs><entry name=\"default\"><gateways><external><list>$GW_ENTRIES</list></external></gateways></entry></configs></client-config>" "portal"
+    "<portal-config><custom-login-page>factory-default</custom-login-page><custom-home-page>factory-default</custom-home-page><custom-help-page>factory-default</custom-help-page><ssl-tls-service-profile>gp-ssl-tls</ssl-tls-service-profile><local-address><interface>$LOCAL_IF</interface><ip-address-family>ipv4</ip-address-family><ip><ipv4>$FLOATING</ipv4></ip></local-address><client-auth><entry name=\"default\"><authentication-profile>$AUTH_PROFILE</authentication-profile><os>Any</os></entry></client-auth></portal-config><client-config><configs><entry name=\"default\"><gateways><external><list>$GW_ENTRIES</list></external></gateways></entry></configs></client-config>" "portal"
   [ "$FAILED" = "0" ] || scm_die "a step failed — not committing"
   commit_wait ;;
 
