@@ -235,23 +235,37 @@ DC_INSTANCE_ID=$(terraform output -raw dc_instance_id) bash scripts/setup-machin
 
 ### B7 — GlobalProtect (on EACH unit)
 
-Environment, for every `scm-gp-local.sh` mode:
+GP sign-in uses **AD accounts in the group `vpnusers`** (`GP_AUTH=ldap`). First the AD side, on
+the DC (group, bind account `svc-gp-ldap`, test user `gpuser` in the group; `GP_USERS` adds more
+members):
+
+```bash
+source <your env file>   # GP_LDAP_BIND_PASSWORD GP_USER_PASSWORD (letters + digits, AD complexity)
+AWS_REGION=<region> DC_INSTANCE_ID=$(terraform output -raw dc_instance_id) GP_USERS="admin" \
+  bash scripts/gp-ldap-setup.sh
+```
+
+Environment, for every `scm-gp-local.sh` mode (all modes need `GW_FQDN` and `CERT_CN`):
 
 ```bash
 source <your env file>   # SCM_TSG_ID SCM_CLIENT_ID SCM_CLIENT_SECRET
-                         # GPAPI_PASSWORD (temporary admin) GP_USER_PASSWORD (test user gpuser)
+                         # GPAPI_PASSWORD (temporary admin) GP_LDAP_BIND_PASSWORD
 export KEY_FILE=<SSH private key of the firewalls>
 export JUMP_INSTANCE_ID=$(terraform output -raw ssm_jumphost_instance_id)
-export GW_FQDN=gw-a.<zone> CERT_CN=gp.<zone>
+export GW_FQDN=gw-a.<zone> CERT_CN=gp.<zone> GP_AUTH=ldap
 for ip in 10.10.0.11 10.10.0.12; do
   for mode in admin build letsencrypt; do FW_IP=$ip bash scripts/scm-gp-local.sh $mode; done
 done
 ```
 
+`GP_AUTH=local` (the default) uses a local account on each unit instead (`gpuser`, password
+`GP_USER_PASSWORD`).
+
 What each mode does:
 - `admin` creates a temporary superuser (`gpapi`) over SSH.
-- `build` writes the certificate placeholder, TLS profile, local auth, tunnel node, gateway and
-  portal.
+- `build` writes the certificate placeholder, TLS profile, sign-in (`GP_AUTH=ldap`: LDAP server
+  profile with both DCs, group mapping `vpnusers`, authentication profile `gp-ldap`), tunnel
+  node, gateway and portal.
 - `letsencrypt` installs the real certificate. Run it right after `build`: until then the unit
   serves the placeholder certificate.
 - `cleanup` deletes `gpapi`. Run it **after B8 and B9**, which still need `gpapi`.
@@ -369,6 +383,8 @@ gateways) are overridden per device. Steps, in order:
      GW_FQDN=gw-b.<zone> GW_NAME=gp-gateway-eu-west FLOATING=10.20.10.100/32 \
      IP_POOL=10.20.200.0/24 DNS_SERVER_PRIMARY=10.23.0.10 DNS_SERVER_SECONDARY=10.13.0.10
      ```
+     With `GP_AUTH=ldap` the LDAP servers follow the DNS servers, so Region B units ask their
+     own DC first and Region A units theirs.
      Global Accelerator starts sending Region B traffic as soon as port 443 answers, so run
      `build` and `letsencrypt` back to back.
    - Region A units: run `admin` and `build` again with `GATEWAYS` and
@@ -388,7 +404,7 @@ gateways) are overridden per device. Steps, in order:
 |---|---|---|
 | SCM sees the pair(s) | `bash scripts/scm-verify.sh AWS-HA-Transit` | all units connected on 12.2.4, one `active` + one `passive` per pair, our rules above `deny-all` |
 | Portal | `curl -s https://gp.<zone>/global-protect/prelogin.esp` | `<status>Success</status>`, trusted certificate |
-| GP client | connect a GlobalProtect client to `gp.<zone>` as `gpuser` | tunnel up, DC reachable, DNS suffix set |
+| GP client | connect a GlobalProtect client to `gp.<zone>` with an AD account in `vpnusers` (e.g. `gpuser`) | tunnel up, DC reachable, DNS suffix set; an account outside `vpnusers` is refused |
 | Guacamole | `https://rdp.<zone>/guacamole/` | login + TOTP enrolment, RDP to the DC |
 | Panel | `https://panel.<zone>/` | AD login; Status shows every unit; Policy simulation answers |
 | HA moves everything | panel → Failover tests → *HA failover* (each region) | EIP **and** routes follow the active unit, both ways; portal outage a few seconds |
@@ -560,6 +576,31 @@ be refreshed against production ("No account exists with the provided key"). The
 gateways (FQDN and priority) on the portal. With equal priorities the client uses the
 best-responding gateway (*best available*); give one gateway a lower number to prefer it. An IP
 would go in `<ip>`, not `<fqdn>`.
+
+**AD sign-in (`GP_AUTH=ldap`).** The same model as path A (`modules/panorama_config/gp.tf`),
+written as local XML:
+- LDAP server profile `gp-ad-ldap` (shared) with one entry per DC, this region's first, and
+  `bind-timelimit` 3 s: during a region outage the firewall gives up on the dead DC before the
+  GP sign-in times out. AD replication keeps the accounts on both DCs.
+- Group mapping `gp-group-map` includes only `cn=vpnusers,cn=users,<base DN>` (lowercase, as
+  group mapping normalises DNs).
+- Authentication profile `gp-ldap`: login attribute `sAMAccountName`, allow-list = the group,
+  `user-domain` = the NetBIOS name. Group mapping stores members as `DOMAIN\user`, so without
+  `user-domain` a member typing a bare name is refused.
+- The firewalls reach the DCs from their **management interface**: the security VPC's
+  management subnets route the Region A and Region B DC CIDRs to the TGW. No service route is
+  needed.
+- Bind account `svc-gp-ldap` (plain domain user) from `scripts/gp-ldap-setup.sh`; re-run it to
+  reset the password, then `build` with the same `GP_LDAP_BIND_PASSWORD`.
+- Group mapping runs on the **active** unit only: on the passive one User-ID is down ("Reason:
+  HA state") and takes over on failover. Right after a `build` it needs up to a minute; sign-ins
+  before that fail with "User is not in allowlist" in the system log. That is not a config error.
+- Do **not** add a `username-modifier` (`%USERDOMAIN%\%USERINPUT%`) to `gp-ldap`: the LDAP
+  search then looks for `sAMAccountName=DOMAIN\user` and every sign-in fails "Invalid
+  username/password" (seen live).
+- Verified live (2026-11-20, both regions): `gpuser` (in `vpnusers`) signs in to the portal and
+  both gateways; a valid AD account outside the group is refused ("User is not in allowlist");
+  a wrong password is refused. Check with the system log (`subtype eq auth`).
 
 **DNS for clients.** The gateway pushes `DNS_SERVER_PRIMARY` (default the DC, `10.13.0.10`), an
 optional `DNS_SERVER_SECONDARY` and `DNS_SUFFIX` (default `panw.labs`). The VPC resolver cannot
