@@ -40,5 +40,5 @@ locals {
 resource "local_file" "init_cfg" {
   for_each = local.init_cfg
   content  = each.value
-  filename = "${path.module}/rendered/${each.key}-init-cfg.txt"
+  filename = "${path.module}/rendered/${var.name_prefix}-${each.key}-init-cfg.txt"
 }

@@ -129,7 +129,7 @@ resource "aws_instance" "apache" {
     http_tokens   = "required"
   }
 
-  user_data = base64encode(<<-CLOUDINIT
+  user_data_base64 = base64encode(<<-CLOUDINIT
 #cloud-config
 # Do NOT use the standard `packages:` directive — see the Phase 1b/2b race note
 # in main.tf. apache2 is installed by apache2-bootstrap.service (retries 60s).
