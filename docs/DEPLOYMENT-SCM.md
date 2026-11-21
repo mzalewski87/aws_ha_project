@@ -739,28 +739,55 @@ only works when the rule is created, so an existing rule has to be recreated.
 
 ### Frontier Virtual Patching
 
-It needs the Advanced Threat Prevention Plus licence and **PAN-OS 12.2.4+**, which is why the
-pair was upgraded in place. FVP is not a switch of its own: it is the ATP Plus stream of
-"vaulted" and streaming signatures, and the **Vulnerability Protection profile** enforces them.
-So it protects only traffic matched by a rule that **has a profile group attached**.
+Sources: PANW *Configure Frontier Virtual Patching (Strata Cloud Manager)*, *Configure Advanced
+Forwarding Settings* and the solution guide *Protecting Vulnerable Systems by Using Frontier
+Virtual Patching* (2026). Everything below was checked against them and the live lab.
 
-- `threat_prevention = true` (default) creates the profile group `lab-threat-prevention`, with
-  PANW's predefined `best-practice` Vulnerability Protection, Anti-Spyware and Antivirus/WildFire
-  profiles, and attaches it to **every allow rule**.
-- URL Filtering and File Blocking are left out on purpose. Their `best-practice` profiles block
-  whole categories and file types, which would silently break lab flows (DC updates, GP client
-  downloads).
-- Without the group, the licence and PAN-OS 12.2.4 alone enforce nothing. This was seen live on
-  2026-11-19: every rule in the folder had an empty `profile_setting`.
-- Check it in SCM: *Security Policy* → the rules show the group in the *Profile* column. Or ask
-  the API: `profile_setting.group` of each rule.
-- Path A (Panorama) has no equivalent in code. There, attach a security profile group with a
-  Vulnerability Protection profile to the allow rules by hand.
+**FVP is a checkbox in a Vulnerability Protection profile**: tab *Frontier Virtual Patching* →
+*Enable Pre-emptive Protections with Frontier Virtual Patching*, plus an action per severity
+(Critical/High/Medium zero-day; default `alert`, the guide uses `reset-both`). A profile group with
+the predefined `best-practice` profile does **not** enable it: that profile is read-only and has
+the checkbox off (seen live 2026-11-21, after `lab-threat-prevention` had been called "enforcing
+FVP" by mistake).
 
-Its pre-disclosure signatures **cannot be triggered on demand**, and PANW documents no test
-method. Content (Apps+Threats) must also stay current: SCM's update schedule needs a role with
-device-settings rights (the lab's service account got HTTP 403), so update content with
-`scm-gp-local.sh content` or set the schedule in the SCM UI.
+Prerequisites (all from the PANW docs):
+- Advanced Threat Prevention Plus licence and **PAN-OS 12.2.4+**; content `9157-10279` or later.
+- **SCM 2026.r4 or later** (solution guide).
+- **Advanced Forwarding active on every firewall.** It is the default only on new images; a
+  firewall *upgraded* to 12.2.2+ keeps it **disabled**. All four lab units (image 12.2.3, upgraded
+  to 12.2.4) answered `Advanced Forwarding is not enabled`. Enable it in SCM: *Network & Device →
+  Device Setup → Content-ID → Cloud Content Settings → Enable Advanced Forwarding*, push, then
+  check each unit:
+  ```
+  debug dataplane pae show connections list active    # docs: at least 4 ACTIVE on VM-Series
+  ```
+  The lab's service account gets HTTP 403 on `/config/device/v1/content-cloud-settings`, so this
+  is a UI step.
+- Inspection must see the payload: the docs assume SSL inbound decryption. The lab's protected
+  server (Apache in Spoke 1) is reached over plain HTTP (CloudFront origin `http-only`, port 80),
+  so it is inspectable without decryption.
+
+Enabling it in this lab:
+1. SCM UI, scope **Global** (the guide's choice, so any folder can use it): clone `best-practice`
+   in *Security Services → Vulnerability Protection*, name it `best-practice-FVP`, tick FVP, set
+   the three actions, Save. The checkbox is not in the public SCM API (fields are dropped
+   silently) nor in the `scm` provider 1.0.13. Saving the clone in the **folder** instead failed
+   with `cloud-inline-avp unexpected node here` (2026-11-21, unresolved).
+2. `phase2-scm-config/terraform.tfvars`: `threat_vulnerability_profile = "best-practice-FVP"`;
+   apply; `scm-push.sh`. `lab-threat-prevention` (on every allow rule) then carries it.
+3. Verify: the profile used by the group shows the checkbox ticked; detections appear in
+   *Incidents & Alerts → Log Viewer → Network/Threat*, filter Threat Name = *Pre-Disclosure
+   Vulnerability Exploit*.
+
+`lab-threat-prevention` itself (`threat_prevention = true`, default) attaches Vulnerability
+Protection, Anti-Spyware and Antivirus/WildFire to every allow rule. URL Filtering and File
+Blocking are left out on purpose (their best-practice profiles break DC updates and GP client
+downloads). Without the group, rules match App-ID only (seen live 2026-11-19: every rule had an
+empty `profile_setting`).
+
+Pre-disclosure signatures **cannot be triggered on demand**. Content (Apps+Threats) must stay
+current: SCM's update schedule needs a role with device-settings rights (the lab's service account
+got HTTP 403), so update content with `scm-gp-local.sh content` or set the schedule in the SCM UI.
 
 ### Admin panel (`modules/panel`, path B only)
 

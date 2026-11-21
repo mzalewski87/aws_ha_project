@@ -137,9 +137,15 @@ variable "ip_defense_mode" {
 }
 
 variable "threat_prevention" {
-  description = "Attach the profile group lab-threat-prevention (predefined best-practice Vulnerability Protection, Anti-Spyware and Antivirus/WildFire profiles) to every allow rule. Vulnerability Protection is what enforces Frontier Virtual Patching (ATP Plus). false = rules match App-ID only."
+  description = "Attach the profile group lab-threat-prevention (Vulnerability Protection = var.threat_vulnerability_profile, predefined best-practice Anti-Spyware and Antivirus/WildFire) to every allow rule. false = rules match App-ID only."
   type        = bool
   default     = true
+}
+
+variable "threat_vulnerability_profile" {
+  description = "Vulnerability Protection profile in lab-threat-prevention. The predefined best-practice does NOT enable Frontier Virtual Patching (read-only, FVP off). For FVP set the name of a clone made in the SCM UI (Global scope) with the FVP checkbox ticked, e.g. best-practice-FVP; it must exist before apply."
+  type        = string
+  default     = "best-practice"
 }
 
 variable "ip_defense_outbound_edls" {

@@ -293,18 +293,26 @@ resource "scm_nat_rule" "inbound_app_dnat" {
 
 # ---- Threat prevention on every allow rule (var.threat_prevention) ---------------
 # Without a security profile group an allow rule only matches App-ID: no Vulnerability Protection,
-# so Frontier Virtual Patching (ATP Plus signatures, consumed by the Vulnerability Protection
-# profile) protected nothing even though the licence and PAN-OS 12.2.4 were in place (seen live:
-# every rule in the folder had an empty profile_setting). This group uses PANW's predefined
-# best-practice profiles for the threat engines only. URL Filtering and File Blocking are left out
-# on purpose: their best-practice profiles block whole categories and file types, which would
-# silently break lab flows (DC updates, GP client downloads) that are not what the demo is about.
+# Anti-Spyware or Antivirus inspection at all (seen live: every rule had an empty profile_setting).
+# This group uses best-practice profiles for the threat engines only. URL Filtering and File
+# Blocking are left out on purpose: their best-practice profiles block whole categories and file
+# types, which would silently break lab flows (DC updates, GP client downloads).
+#
+# Frontier Virtual Patching is NOT enabled by this group as such. FVP is a checkbox in a
+# Vulnerability Protection profile ("Enable Pre-emptive Protections with Frontier Virtual
+# Patching"), and the predefined best-practice profile is read-only with it off. Per the FVP
+# solution guide, clone best-practice in the Global scope (e.g. best-practice-FVP), tick FVP, set
+# the zero-day actions, then point var.threat_vulnerability_profile at it. The checkbox is not in
+# the public SCM API or the scm provider, so that profile is made in the SCM UI. FVP also needs
+# Advanced Forwarding enabled on every firewall (Device Setup > Content-ID > Cloud Content
+# Settings); firewalls upgraded to 12.2.x keep it disabled. Check on a unit with
+# `debug dataplane pae show connections list active`.
 resource "scm_profile_group" "threat" {
   count  = var.threat_prevention ? 1 : 0
   name   = "lab-threat-prevention"
   folder = local.folder
 
-  vulnerability               = ["best-practice"]
+  vulnerability               = [var.threat_vulnerability_profile]
   spyware                     = ["best-practice"]
   virus_and_wildfire_analysis = ["best-practice"]
 }
